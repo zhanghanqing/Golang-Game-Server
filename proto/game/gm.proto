@@ -1,0 +1,14 @@
+syntax = "proto3";
+
+package gs.game;
+
+option go_package = "gameserver/game/pb";
+
+// GmCommandReq runs a debug command such as "additem 1001 5". Only available when GM is enabled.
+message GmCommandReq {
+  string command = 1;
+}
+
+message GmCommandResp {
+  string output = 1;
+}

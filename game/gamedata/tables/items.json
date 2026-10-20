@@ -1,0 +1,6 @@
+[
+  { "id": 1001, "name": "Small EXP Potion", "usable": true,  "exp": 50,  "gold": 0 },
+  { "id": 1002, "name": "Gold Pouch",       "usable": true,  "exp": 0,   "gold": 100 },
+  { "id": 1003, "name": "Large EXP Potion", "usable": true,  "exp": 500, "gold": 0 },
+  { "id": 2001, "name": "Iron Sword",       "usable": false, "exp": 0,   "gold": 0 }
+]

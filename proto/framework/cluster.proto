@@ -1,0 +1,32 @@
+// Internal envelope exchanged between server nodes over the message bus.
+// Clients never see this message.
+syntax = "proto3";
+
+package gs.cluster;
+
+option go_package = "gameserver/framework/pb/clusterpb";
+
+// Kind tells the receiver how to interpret an Envelope.
+enum Kind {
+  KIND_UNSPECIFIED = 0;
+  KIND_FORWARD = 1;        // gate -> backend: a client request
+  KIND_REPLY = 2;          // backend -> gate: deliver one packet to one session (response or push)
+  KIND_BIND = 3;           // backend -> gate: attach uid and backend routes to a session
+  KIND_KICK = 4;           // backend -> gate: disconnect a session
+  KIND_SESSION_CLOSED = 5; // gate -> backend: a session went away
+  KIND_BROADCAST = 6;      // backend -> all gates: deliver one packet to many sessions
+}
+
+message Envelope {
+  Kind kind = 1;
+  string src_node = 2;            // node id that produced the envelope
+  string gate_node = 3;           // gate node that owns the client session
+  uint64 session_id = 4;          // session id, unique inside its gate node
+  int64 uid = 5;                  // authenticated user id, 0 when not logged in
+  uint32 msg_id = 6;              // client message id of body
+  uint32 seq = 7;                 // client request sequence, 0 for pushes
+  bytes body = 8;                 // protobuf-encoded client message
+  map<string, string> routes = 9; // BIND: service name -> backend node id
+  repeated int64 uids = 10;       // BROADCAST: target uids, empty means every authenticated session
+  int32 reason = 11;              // KICK: gs.sys.KickReason
+}

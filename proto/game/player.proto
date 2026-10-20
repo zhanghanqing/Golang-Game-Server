@@ -1,0 +1,32 @@
+syntax = "proto3";
+
+package gs.game;
+
+option go_package = "gameserver/game/pb";
+
+import "game/scene.proto";
+
+message PlayerInfo {
+  int64 uid = 1;
+  string name = 2;
+  int32 level = 3;
+  int64 exp = 4;
+  int64 gold = 5;
+  int64 created_at_ms = 6;
+}
+
+// EnterGameReq loads (or creates) the character and puts it into the world scene.
+message EnterGameReq {
+  string name = 1; // only used when the character is created for the first time
+}
+
+message EnterGameResp {
+  PlayerInfo player = 1;
+  int32 scene_id = 2;
+  Vector2 position = 3;
+}
+
+// PlayerInfoPush is sent whenever the base attributes of the player change.
+message PlayerInfoPush {
+  PlayerInfo player = 1;
+}

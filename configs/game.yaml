@@ -1,0 +1,34 @@
+# Distributed mode: game node. Stateful; players are assigned by rendezvous hashing on uid.
+
+node:
+  id: ${NODE_ID:-game-1}
+  roles: [game]
+
+log:
+  level: ${LOG_LEVEL:-info}
+  format: ${LOG_FORMAT:-json}
+
+cluster:
+  bus: nats
+  nats_url: ${NATS_URL:-nats://127.0.0.1:4222}
+  registry: redis
+  registry_ttl: 10s
+
+redis:
+  addr: ${REDIS_ADDR:-127.0.0.1:6379}
+
+storage:
+  driver: mongo
+
+mongo:
+  uri: ${MONGO_URI:-mongodb://127.0.0.1:27017}
+  database: game
+
+admin:
+  addr: ${ADMIN_ADDR:-0.0.0.0:9102}
+
+game:
+  save_interval: 30s
+  gm_enabled: ${GM_ENABLED:-false}
+  chat_interval: 1s
+  max_move_step: 50

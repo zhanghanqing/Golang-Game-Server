@@ -1,0 +1,28 @@
+syntax = "proto3";
+
+package gs.game;
+
+option go_package = "gameserver/game/pb";
+
+message Item {
+  int32 item_id = 1;
+  int64 count = 2;
+}
+
+message BagGetReq {}
+
+message BagGetResp {
+  repeated Item items = 1;
+}
+
+message ItemUseReq {
+  int32 item_id = 1;
+  int64 count = 2;
+}
+
+message ItemUseResp {}
+
+// BagUpdatePush carries changed stacks; count == 0 means the stack was removed.
+message BagUpdatePush {
+  repeated Item items = 1;
+}

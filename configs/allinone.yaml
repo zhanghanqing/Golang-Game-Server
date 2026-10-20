@@ -1,0 +1,45 @@
+# All-in-one node: gate + login + game in one process, zero external dependencies.
+# In-process bus, in-memory registry and in-memory storage (data is lost on exit).
+# Ideal for development, debugging and automated tests.
+#
+#   go run ./cmd/server -config configs/allinone.yaml
+
+node:
+  id: ${NODE_ID:-dev-1}
+  roles: [gate, login, game]
+  worker_id: 1
+
+log:
+  level: ${LOG_LEVEL:-info}
+  format: text
+
+cluster:
+  bus: local
+  registry: memory
+
+storage:
+  driver: memory
+
+admin:
+  addr: 127.0.0.1:9100
+
+gate:
+  tcp_addr: ":7000"
+  ws_addr: ":7001"
+  ws_path: /ws
+  max_conns: 10000
+  max_packet_size: 65536
+  send_queue_size: 256
+  idle_timeout: 60s
+  rate_limit: 50
+  rate_burst: 100
+
+login:
+  bcrypt_cost: 10
+  max_concurrent: 256
+
+game:
+  save_interval: 30s
+  gm_enabled: true
+  chat_interval: 1s
+  max_move_step: 50

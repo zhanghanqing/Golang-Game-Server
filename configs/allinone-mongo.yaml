@@ -1,0 +1,35 @@
+# All-in-one node with persistent MongoDB storage.
+# Start MongoDB first:  docker compose -f deploy/docker-compose.yml up -d mongo
+#
+#   go run ./cmd/server -config configs/allinone-mongo.yaml
+
+node:
+  id: ${NODE_ID:-dev-1}
+  roles: [gate, login, game]
+  worker_id: 1
+
+log:
+  level: ${LOG_LEVEL:-info}
+  format: text
+
+cluster:
+  bus: local
+  registry: memory
+
+storage:
+  driver: mongo
+
+mongo:
+  uri: ${MONGO_URI:-mongodb://127.0.0.1:27017}
+  database: game
+
+admin:
+  addr: 127.0.0.1:9100
+
+gate:
+  tcp_addr: ":7000"
+  ws_addr: ":7001"
+
+game:
+  save_interval: 30s
+  gm_enabled: true

@@ -1,0 +1,8 @@
+# Code generation: `buf generate` writes Go code into the package named by each
+# file's go_package option (the module prefix "gameserver" is stripped).
+version: v2
+plugins:
+  - local: protoc-gen-go
+    out: .
+    opt:
+      - module=gameserver

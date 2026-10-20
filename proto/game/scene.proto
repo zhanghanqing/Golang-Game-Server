@@ -1,0 +1,40 @@
+syntax = "proto3";
+
+package gs.game;
+
+option go_package = "gameserver/game/pb";
+
+message Vector2 {
+  float x = 1;
+  float y = 2;
+}
+
+message SceneEntity {
+  int64 uid = 1;
+  string name = 2;
+  Vector2 position = 3;
+}
+
+message SceneMoveReq {
+  Vector2 target = 1;
+}
+
+message SceneMoveResp {
+  Vector2 position = 1;
+}
+
+// SceneEntityEnterPush: these entities entered your view.
+message SceneEntityEnterPush {
+  repeated SceneEntity entities = 1;
+}
+
+// SceneEntityLeavePush: these entities left your view.
+message SceneEntityLeavePush {
+  repeated int64 uids = 1;
+}
+
+// SceneEntityMovePush: a visible entity moved.
+message SceneEntityMovePush {
+  int64 uid = 1;
+  Vector2 position = 2;
+}

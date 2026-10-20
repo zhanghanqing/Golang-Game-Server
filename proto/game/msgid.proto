@@ -1,0 +1,71 @@
+// Message ids and error codes of the sample MMO game.
+syntax = "proto3";
+
+package gs.game;
+
+option go_package = "gameserver/game/pb";
+
+// MsgID assigns a unique id to every client-visible game message.
+// Ranges decide which backend service the gate forwards a request to:
+//   [1000, 1999] -> login service (no authentication required)
+//   [2000, 9999] -> game service  (authentication required, sticky routing)
+enum MsgID {
+  MSG_ID_NONE = 0;
+
+  // login service
+  LOGIN_REQ = 1001;
+  LOGIN_RESP = 1002;
+
+  // game service: player
+  ENTER_GAME_REQ = 2001;
+  ENTER_GAME_RESP = 2002;
+  PLAYER_INFO_PUSH = 2003;
+
+  // game service: bag
+  BAG_GET_REQ = 2101;
+  BAG_GET_RESP = 2102;
+  ITEM_USE_REQ = 2103;
+  ITEM_USE_RESP = 2104;
+  BAG_UPDATE_PUSH = 2105;
+
+  // game service: chat
+  CHAT_SEND_REQ = 2201;
+  CHAT_SEND_RESP = 2202;
+  CHAT_PUSH = 2203;
+
+  // game service: scene
+  SCENE_MOVE_REQ = 2301;
+  SCENE_MOVE_RESP = 2302;
+  SCENE_ENTITY_ENTER_PUSH = 2303;
+  SCENE_ENTITY_LEAVE_PUSH = 2304;
+  SCENE_ENTITY_MOVE_PUSH = 2305;
+
+  // game service: GM (debug) commands
+  GM_COMMAND_REQ = 2901;
+  GM_COMMAND_RESP = 2902;
+}
+
+// ErrCode lists business error codes (>= 1000). Framework codes live in gs.sys.ErrorCode.
+enum ErrCode {
+  ERR_NONE = 0;
+
+  ERR_INVALID_ACCOUNT = 1001;
+  ERR_INVALID_PASSWORD = 1002;
+  ERR_WRONG_PASSWORD = 1003;
+
+  ERR_NOT_IN_GAME = 2001;
+
+  ERR_ITEM_NOT_FOUND = 2101;
+  ERR_ITEM_NOT_ENOUGH = 2102;
+  ERR_ITEM_NOT_USABLE = 2103;
+
+  ERR_CHAT_EMPTY = 2201;
+  ERR_CHAT_TOO_LONG = 2202;
+  ERR_CHAT_TOO_FAST = 2203;
+
+  ERR_POSITION_OUT_OF_BOUNDS = 2301;
+  ERR_MOVE_TOO_FAR = 2302;
+
+  ERR_GM_DISABLED = 2901;
+  ERR_GM_BAD_COMMAND = 2902;
+}

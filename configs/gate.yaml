@@ -1,0 +1,31 @@
+# Distributed mode: gate node. Accepts clients and forwards requests over NATS.
+# Run any number of gate nodes behind a TCP load balancer; each needs a unique node.id.
+
+node:
+  id: ${NODE_ID:-gate-1}
+  roles: [gate]
+
+log:
+  level: ${LOG_LEVEL:-info}
+  format: ${LOG_FORMAT:-json}
+
+cluster:
+  bus: nats
+  nats_url: ${NATS_URL:-nats://127.0.0.1:4222}
+  registry: redis
+  registry_ttl: 10s
+
+redis:
+  addr: ${REDIS_ADDR:-127.0.0.1:6379}
+
+admin:
+  addr: ${ADMIN_ADDR:-0.0.0.0:9100}
+
+gate:
+  tcp_addr: ${GATE_TCP_ADDR:-:7000}
+  ws_addr: ${GATE_WS_ADDR:-:7001}
+  ws_path: /ws
+  max_conns: 20000
+  idle_timeout: 60s
+  rate_limit: 50
+  rate_burst: 100

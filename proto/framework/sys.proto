@@ -1,0 +1,58 @@
+// Framework-level system messages shared by every game built on this framework.
+// Message ids in the range [1, 999] are reserved for the framework.
+syntax = "proto3";
+
+package gs.sys;
+
+option go_package = "gameserver/framework/pb/syspb";
+
+// SysMsgID lists the reserved framework message ids.
+enum SysMsgID {
+  SYS_MSG_ID_NONE = 0;
+  HEARTBEAT_REQ = 1;  // client -> server, keeps the connection alive
+  HEARTBEAT_RESP = 2; // server -> client
+  ERROR_RESP = 3;     // server -> client, generic failure response for any request
+  KICK_PUSH = 4;      // server -> client, sent right before the server closes the connection
+}
+
+// ErrorCode lists framework error codes. Business error codes must be >= 1000.
+enum ErrorCode {
+  OK = 0;
+  INTERNAL = 1;
+  UNKNOWN_MESSAGE = 2;
+  BAD_REQUEST = 3;
+  NOT_AUTHENTICATED = 4;
+  RATE_LIMITED = 5;
+  SERVICE_UNAVAILABLE = 6;
+  TIMEOUT = 7;
+}
+
+// KickReason tells the client why it was disconnected.
+enum KickReason {
+  KICK_UNKNOWN = 0;
+  KICK_DUPLICATE_LOGIN = 1;
+  KICK_SERVER_SHUTDOWN = 2;
+  KICK_IDLE_TIMEOUT = 3;
+  KICK_BY_ADMIN = 4;
+}
+
+message HeartbeatReq {
+  int64 client_time_ms = 1;
+}
+
+message HeartbeatResp {
+  int64 client_time_ms = 1;
+  int64 server_time_ms = 2;
+}
+
+// ErrorResp is returned (with the request seq) instead of the normal response when a request fails.
+message ErrorResp {
+  int32 code = 1;
+  string message = 2;
+  uint32 req_msg_id = 3;
+}
+
+message KickPush {
+  KickReason reason = 1;
+  string message = 2;
+}

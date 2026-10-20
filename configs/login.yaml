@@ -1,0 +1,34 @@
+# Distributed mode: login node. Stateless; scale horizontally.
+# worker_id must be unique among login nodes (Snowflake uid generation).
+
+node:
+  id: ${NODE_ID:-login-1}
+  roles: [login]
+  worker_id: ${WORKER_ID:-1}
+
+log:
+  level: ${LOG_LEVEL:-info}
+  format: ${LOG_FORMAT:-json}
+
+cluster:
+  bus: nats
+  nats_url: ${NATS_URL:-nats://127.0.0.1:4222}
+  registry: redis
+  registry_ttl: 10s
+
+redis:
+  addr: ${REDIS_ADDR:-127.0.0.1:6379}
+
+storage:
+  driver: mongo
+
+mongo:
+  uri: ${MONGO_URI:-mongodb://127.0.0.1:27017}
+  database: game
+
+admin:
+  addr: ${ADMIN_ADDR:-0.0.0.0:9101}
+
+login:
+  bcrypt_cost: 10
+  max_concurrent: 256

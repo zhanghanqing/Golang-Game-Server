@@ -1,0 +1,10 @@
+# buf module configuration. All .proto sources live under ./proto.
+version: v2
+modules:
+  - path: proto
+lint:
+  use:
+    - MINIMAL
+breaking:
+  use:
+    - FILE
