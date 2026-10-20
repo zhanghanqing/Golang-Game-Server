@@ -207,6 +207,33 @@ timeline
 * `Makefile`：proto、build、test、race、run、robot、up、down。
 * 文档：中英双语的根 README、本日志、架构、协议、快速上手，以及每个模块带图的 README（英文 + 中文）。
 
+## 第 13 步 —— 网页测试控制台
+
+目标：一条命令启动服务器，然后在浏览器里测试 —— 可以点按钮操作，也可以一键自检。
+
+决策：
+
+| 问题 | 选择 | 原因 |
+|---|---|---|
+| 网页是否也负责启停服务器？ | 否 —— 服务器用命令启动 | 网页上的"启动"按钮需要另一个常驻进程，且有安全风险；进程生命周期应交给命令行 / Docker / k8s |
+| 页面由谁提供？ | 管理端口的 `/console/`，用 `go:embed` 内嵌 | 无需额外部署；只在 `allinone.yaml` 中开启 |
+| 浏览器如何处理 protobuf？ | 由 Go 描述符生成的 `schema.json` + 一个小型 JS 编解码器 | 永远与服务器一致，无需代码生成，不依赖 CDN（断网可用） |
+| 如何验证？ | 在 Docker 中用 Puppeteer（无头 Chrome）连接真实服务器 | 测的就是用户真实的操作，包括两个浏览器之间的互动 |
+
+新增内容：`framework/message.Registry.Each`、`game/webconsole`（schema + 处理器 + 静态页面）、
+`console` 配置段、Go 单元测试，以及 `test/webconsole`（28 项浏览器检查）。
+
+测试发现并在交付前修复的问题：
+
+1. schema 中缺少错误码枚举：`msgid.proto` 里没有消息，只遍历"已注册消息所在的文件"会漏掉它。
+   现在会扫描相关 package 下的所有文件（由 `webconsole_test.go` 发现）。
+2. `favicon.ico` 的 404 被记为控制台错误 → 改用内联 SVG 图标。
+3. 被踢下线后背包面板显示为空，而不是"尚未进入游戏"：界面重绘早于状态切换 → 调整顺序并补充测试。
+4. 消息日志中显示了登录密码 → 已打码并补充测试。
+
+结果：28/28 项浏览器检查通过，连续 3 次运行稳定；并在本机用 `go run ./cmd/server` +
+`http://127.0.0.1:9100/` 手动验证。
+
 ## 后续可做
 
 1. CI 流水线：`gofmt`、`go vet`、`go test -race`、`buf lint`/`buf breaking`、镜像构建。

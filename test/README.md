@@ -38,6 +38,23 @@ Every node in `test/cluster` has its own NATS connection and registry client,
 so the code paths are identical to separate processes. Storage is shared via
 `bootstrap.WithRepos` (stand-in for MongoDB).
 
+## test/webconsole — browser test (headless Chrome)
+
+Builds the server image, starts it, and drives the [web console](../game/webconsole/README.md)
+with Puppeteer exactly like a user: 28 checks covering the one-click self-test,
+the manual flow through buttons, two browsers meeting on the map and chatting,
+movement by keyboard and map click, duplicate-login kick and view reset,
+readable error toast, password masking, language switch, 390 px mobile layout
+and zero JavaScript errors. Screenshots and `results.json` land in
+`test/webconsole/out/`.
+
+```bash
+docker compose -f test/webconsole/compose.yml up --build --abort-on-container-exit --exit-code-from browser
+docker compose -f test/webconsole/compose.yml down
+```
+
+## Commands
+
 ```bash
 go test ./test/...
 go test -count=10 ./test/...       # flakiness check

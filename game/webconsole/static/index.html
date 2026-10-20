@@ -1,0 +1,140 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Game Server Console</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='M8 1 15 8 8 15 1 8z' fill='%232f6bdc'/%3E%3C/svg%3E">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <span class="logo" aria-hidden="true">◆</span>
+      <span data-i18n="title">游戏服务器网页控制台</span>
+    </div>
+    <div class="status">
+      <span id="statusPill" class="pill pill-off" data-state="disconnected">未连接</span>
+      <span class="meta"><span data-i18n="uid">UID</span>: <b id="uidText">—</b></span>
+      <span class="meta">RTT: <b id="rttText">—</b></span>
+      <button id="btnLang" class="ghost small" type="button">EN</button>
+    </div>
+  </header>
+
+  <div id="banner" class="banner" hidden></div>
+  <div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
+
+  <main class="grid">
+    <!-- Column 1: connection, login, self-test -->
+    <section class="col">
+      <div class="card">
+        <h2 data-i18n="connTitle">连接</h2>
+        <label class="field">
+          <span data-i18n="wsUrl">网关 WebSocket 地址</span>
+          <input id="wsUrl" spellcheck="false" autocomplete="off">
+        </label>
+        <div class="row">
+          <button id="btnConnect" type="button" data-i18n="connect">连接</button>
+          <button id="btnDisconnect" type="button" class="ghost" data-i18n="disconnect" disabled>断开</button>
+        </div>
+      </div>
+
+      <div class="card">
+        <h2 data-i18n="loginTitle">登录与进入游戏</h2>
+        <label class="field"><span data-i18n="account">账号</span><input id="account" autocomplete="off" spellcheck="false"></label>
+        <label class="field"><span data-i18n="password">密码</span><input id="password" type="password" autocomplete="off"></label>
+        <label class="field"><span data-i18n="charName">角色名（首次创建时使用）</span><input id="charName" autocomplete="off"></label>
+        <div class="row">
+          <button id="btnLogin" type="button" data-i18n="login" disabled>登录</button>
+          <button id="btnEnter" type="button" data-i18n="enter" disabled>进入游戏</button>
+        </div>
+        <p class="hint" data-i18n="loginHint">新账号会自动注册。账号 3–32 位字母数字下划线，密码 6–64 位。</p>
+      </div>
+
+      <div class="card">
+        <h2 data-i18n="selfTestTitle">一键自检</h2>
+        <p class="hint" data-i18n="selfTestHint">用一个独立连接和全新账号，自动跑完整个客户端流程，逐项检查服务器响应。不影响你当前的会话。</p>
+        <button id="btnSelfTest" type="button" class="primary wide" data-i18n="runSelfTest">运行自检</button>
+        <div id="selftestSummary" class="summary" hidden></div>
+        <ol id="selftestList" class="checklist"></ol>
+      </div>
+    </section>
+
+    <!-- Column 2: character, map, bag -->
+    <section class="col">
+      <div class="card">
+        <h2 data-i18n="playerTitle">角色</h2>
+        <div id="playerEmpty" class="empty" data-i18n="notInGame">尚未进入游戏</div>
+        <div id="playerCard" class="player" hidden>
+          <div class="player-head">
+            <span id="pName" class="pname"></span>
+            <span id="pLevel" class="badge"></span>
+          </div>
+          <div class="exp"><div id="pExpBar" class="exp-bar"></div></div>
+          <div class="kv">
+            <span data-i18n="exp">经验</span><b id="pExp"></b>
+            <span data-i18n="gold">金币</span><b id="pGold"></b>
+            <span data-i18n="pos">坐标</span><b id="pPos"></b>
+          </div>
+        </div>
+      </div>
+
+      <div class="card">
+        <h2 data-i18n="mapTitle">场景地图</h2>
+        <canvas id="map" width="320" height="320" aria-label="scene map"></canvas>
+        <p class="hint" data-i18n="mapHint">点击地图或用 WASD / 方向键移动。高亮区域是你的视野（九宫格 AOI）。</p>
+        <div id="nearby" class="nearby"></div>
+      </div>
+
+      <div class="card">
+        <div class="card-head">
+          <h2 data-i18n="bagTitle">背包</h2>
+          <button id="btnBag" type="button" class="ghost small" data-i18n="refresh" disabled>刷新</button>
+        </div>
+        <table class="bag">
+          <thead><tr><th>ID</th><th data-i18n="itemName">道具</th><th data-i18n="count">数量</th><th></th></tr></thead>
+          <tbody id="bagBody"><tr><td colspan="4" class="empty" data-i18n="notInGame">尚未进入游戏</td></tr></tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- Column 3: chat, GM, log -->
+    <section class="col">
+      <div class="card">
+        <h2 data-i18n="chatTitle">聊天</h2>
+        <div id="chatList" class="chat"></div>
+        <div class="row">
+          <select id="chatChannel" aria-label="channel">
+            <option value="CHAT_CHANNEL_WORLD" data-i18n="world">世界</option>
+            <option value="CHAT_CHANNEL_SCENE" data-i18n="scene">附近</option>
+          </select>
+          <input id="chatText" class="grow" maxlength="200" autocomplete="off" data-i18n-ph="chatPh" placeholder="输入消息，回车发送">
+          <button id="btnChat" type="button" data-i18n="send" disabled>发送</button>
+        </div>
+      </div>
+
+      <div class="card">
+        <h2 data-i18n="gmTitle">GM 命令</h2>
+        <div class="row">
+          <input id="gmCmd" class="grow" autocomplete="off" spellcheck="false" placeholder="help | additem 1003 2 | addgold 500 | addexp 300 | info">
+          <button id="btnGm" type="button" data-i18n="run" disabled>执行</button>
+        </div>
+        <pre id="gmOut" class="gm-out" hidden></pre>
+      </div>
+
+      <div class="card log-card">
+        <div class="card-head">
+          <h2 data-i18n="logTitle">消息日志</h2>
+          <div class="row tight">
+            <label class="check"><input id="logHideHb" type="checkbox" checked><span data-i18n="hideHb">隐藏心跳</span></label>
+            <button id="btnClearLog" type="button" class="ghost small" data-i18n="clear">清空</button>
+          </div>
+        </div>
+        <ul id="logList" class="log"></ul>
+      </div>
+    </section>
+  </main>
+
+  <script type="module" src="app.js"></script>
+</body>
+</html>

@@ -25,7 +25,19 @@ level=INFO msg="server started" module=app
 
 端口：`7000` TCP 客户端、`7001` WebSocket（`/ws`）、`127.0.0.1:9100` 管理端口。
 
-## 3. 用机器人试玩
+## 3. 在浏览器中测试
+
+打开 **http://127.0.0.1:9100/**（会自动跳转到 `/console/`）。
+
+* 点击**运行自检**：在独立连接上执行 13 项检查（连接、心跳、未登录拦截、登录、进入游戏、背包、
+  使用道具、错误处理、聊天、移动、防瞬移、GM、断开）；出现绿色的"全部通过"就说明服务器整条链路正常。
+* 也可以手动操作：连接 → 登录 → 进入游戏，然后使用道具、聊天，用 WASD / 方向键或点击地图移动。
+  每一个数据包都会显示在消息日志里。
+* 再开一个窗口，就能看到两个玩家互动。
+
+详见 [game/webconsole](../game/webconsole/README.zh-CN.md)。
+
+## 4. 用机器人试玩
 
 另开一个终端：
 
@@ -48,7 +60,7 @@ kicked:       0
 每个机器人会登录、进入游戏、查看背包、使用道具、在世界频道打招呼，然后随机走动
 （`pushes recv` 中就包含 AOI 推送）。
 
-## 4. 查看运行状态
+## 5. 查看运行状态
 
 ```bash
 curl http://127.0.0.1:9100/readyz
@@ -56,7 +68,7 @@ curl -s http://127.0.0.1:9100/metrics | grep ^gs_
 go tool pprof http://127.0.0.1:9100/debug/pprof/heap
 ```
 
-## 5. 持久化存储（MongoDB）
+## 6. 持久化存储（MongoDB）
 
 ```bash
 docker compose -f deploy/docker-compose.yml up -d mongo
@@ -65,7 +77,7 @@ go run ./cmd/server -config configs/allinone-mongo.yaml
 
 数据写入 `game` 库的 `accounts` 和 `players` 集合。
 
-## 6. 分布式集群
+## 7. 分布式集群
 
 ```bash
 docker compose -f deploy/docker-compose.yml up -d --build
@@ -87,7 +99,7 @@ go run ./cmd/server -config configs/game.yaml
 
 停止：`docker compose -f deploy/docker-compose.yml down`（加 `-v` 会清空数据）。
 
-## 7. 测试
+## 8. 测试
 
 ```bash
 go test ./...              # 单元 + 端到端 + 分布式（内嵌 NATS、miniredis）
@@ -102,7 +114,7 @@ go test -run TestFullGameFlow -v ./test/e2e/
 | `test/e2e` | 通过真实 TCP 与 WebSocket 测试完整服务器：登录、AOI、背包、聊天、移动、GM、顶号、断线与停服存盘、50 个并发玩家 |
 | `test/cluster` | 2 网关 + 1 登录 + 2 游戏节点，走真实 NATS 与 Redis 协议：玩家分布、跨节点聊天、跨网关重登、存盘 |
 
-## 8. 配置参考
+## 9. 配置参考
 
 | 段 | 键 | 默认值 | 说明 |
 |---|---|---|---|
@@ -117,6 +129,7 @@ go test -run TestFullGameFlow -v ./test/e2e/
 | `redis` | `addr` `password` `db` `pool_size` | 127.0.0.1:6379 | |
 | `mongo` | `uri` `database` `pool_size` | mongodb://127.0.0.1:27017, game | |
 | `admin` | `addr` | —（关闭） | |
+| `console` | `enabled` | false | 在管理端口提供 `/console/` 网页控制台（仅开发使用） |
 | `gate` | `tcp_addr` `ws_addr` `ws_path` | —、—、/ws | |
 | | `max_conns` `max_packet_size` `send_queue_size` | 0、64KiB、256 | |
 | | `idle_timeout` `rate_limit` `rate_burst` | 60s、50、100 | |
@@ -125,7 +138,7 @@ go test -run TestFullGameFlow -v ./test/e2e/
 
 所有值都可以引用环境变量：`${NAME:-默认值}`。
 
-## 9. 常见问题
+## 10. 常见问题
 
 | 现象 | 原因 / 解决 |
 |---|---|

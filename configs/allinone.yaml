@@ -21,7 +21,11 @@ storage:
   driver: memory
 
 admin:
-  addr: 127.0.0.1:9100
+  addr: ${ADMIN_ADDR:-127.0.0.1:9100}
+
+# Browser test console: http://127.0.0.1:9100/console/ (development only)
+console:
+  enabled: ${CONSOLE_ENABLED:-true}
 
 gate:
   tcp_addr: ":7000"

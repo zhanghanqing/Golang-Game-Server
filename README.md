@@ -45,6 +45,7 @@ flowchart LR
 
 * Unit tests, full end-to-end tests over real sockets, and an in-process
   distributed cluster test (embedded NATS + miniredis)
+* Browser test console with one-click self-test, verified by a headless-Chrome test
 * Robot load tester, Dockerfile, docker-compose cluster
 * Bilingual documentation with diagrams for every module
 
@@ -54,12 +55,18 @@ flowchart LR
 # 1. run a complete server with zero dependencies
 go run ./cmd/server -config configs/allinone.yaml
 
-# 2. in another terminal: 20 simulated players
+# 2. open the browser test console and click "Run self-test"
+#    http://127.0.0.1:9100/
+
+# 3. in another terminal: 20 simulated players
 go run ./cmd/robot -n 20 -duration 10s
 
-# 3. tests
+# 4. tests
 go test ./...
 ```
+
+The [web console](game/webconsole/README.md) lets you log in, move on a map,
+chat, use items and watch every packet — or check the whole flow with one click.
 
 Distributed cluster (Docker): `docker compose -f deploy/docker-compose.yml up -d --build`.
 See [Getting started](docs/getting-started.md).
@@ -98,7 +105,7 @@ Module READMEs: [network](framework/network/README.md) ·
 [idgen](framework/idgen/README.md) · [datatable](framework/datatable/README.md) ·
 [bootstrap](game/bootstrap/README.md) · [loginsvc](game/loginsvc/README.md) ·
 [gamesvc](game/gamesvc/README.md) · [logic](game/logic/README.md) ·
-[repo](game/repo/README.md) · [proto](proto/README.md) · [cmd](cmd/README.md) ·
+[repo](game/repo/README.md) · [webconsole](game/webconsole/README.md) · [proto](proto/README.md) · [cmd](cmd/README.md) ·
 [deploy](deploy/README.md) · [test](test/README.md)
 
 ## Tech stack

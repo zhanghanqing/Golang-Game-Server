@@ -15,6 +15,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net"
+	"net/http"
 	"slices"
 
 	"gameserver/framework/admin"
@@ -30,6 +32,7 @@ import (
 	"gameserver/game/loginsvc"
 	"gameserver/game/protocol"
 	"gameserver/game/repo"
+	"gameserver/game/webconsole"
 )
 
 // Role names.
@@ -55,6 +58,12 @@ type StorageConfig struct {
 	Driver string `yaml:"driver"`
 }
 
+// ConsoleConfig controls the browser test console served by the admin server.
+type ConsoleConfig struct {
+	// Enabled mounts the console at http://<admin.addr>/console/. Development/QA only.
+	Enabled bool `yaml:"enabled"`
+}
+
 // Config is the root configuration file.
 type Config struct {
 	Node    NodeConfig      `yaml:"node"`
@@ -64,6 +73,7 @@ type Config struct {
 	Redis   redisx.Config   `yaml:"redis"`
 	Mongo   mongox.Config   `yaml:"mongo"`
 	Admin   admin.Config    `yaml:"admin"`
+	Console ConsoleConfig   `yaml:"console"`
 	Gate    gate.Config     `yaml:"gate"`
 	Login   loginsvc.Config `yaml:"login"`
 	Game    gamesvc.Config  `yaml:"game"`
@@ -167,11 +177,15 @@ func Build(cfg *Config, opts ...Option) (*Server, error) {
 	s.Admin = admin.New(cfg.Admin)
 	s.App.Add(s.Cluster, s.Admin)
 
+	tables, err := gamedata.Load()
+	if err != nil {
+		return nil, err
+	}
+	if cfg.Console.Enabled {
+		mountConsole(s.Admin, cfg, tables)
+	}
+
 	if cfg.Has(RoleGame) {
-		tables, err := gamedata.Load()
-		if err != nil {
-			return nil, err
-		}
 		s.Game = gamesvc.New(cfg.Game, s.Cluster, reg, s.Players, tables)
 		s.App.Add(s.Game)
 	}
@@ -195,4 +209,14 @@ func Build(cfg *Config, opts ...Option) (*Server, error) {
 		OnStop:     func(context.Context) error { s.Admin.SetReady(false); return nil },
 	})
 	return s, nil
+}
+
+// mountConsole serves the web console on the admin server and redirects "/" to it.
+func mountConsole(adm *admin.Server, cfg *Config, tables *gamedata.Tables) {
+	opts := webconsole.Options{WSPath: cfg.Gate.WSPath, Tables: tables}
+	if _, port, err := net.SplitHostPort(cfg.Gate.WSAddr); err == nil {
+		opts.WSPort = port
+	}
+	adm.Handle(webconsole.Prefix, webconsole.Handler(protocol.Registry(), opts))
+	adm.Handle("/{$}", http.RedirectHandler(webconsole.Prefix, http.StatusFound))
 }

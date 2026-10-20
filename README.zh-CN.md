@@ -43,6 +43,7 @@ flowchart LR
 **质量保障**
 
 * 单元测试、基于真实 socket 的完整端到端测试、进程内分布式集群测试（内嵌 NATS + miniredis）
+* 带一键自检的网页测试控制台，并由无头 Chrome 自动化测试验证
 * 机器人压测工具、Dockerfile、docker-compose 集群
 * 每个模块都有中英双语、带图示的文档
 
@@ -52,12 +53,18 @@ flowchart LR
 # 1. 零依赖运行完整服务器
 go run ./cmd/server -config configs/allinone.yaml
 
-# 2. 另开终端：20 个模拟玩家
+# 2. 浏览器打开网页测试控制台，点击"运行自检"
+#    http://127.0.0.1:9100/
+
+# 3. 另开终端：20 个模拟玩家
 go run ./cmd/robot -n 20 -duration 10s
 
-# 3. 运行测试
+# 4. 运行测试
 go test ./...
 ```
+
+[网页控制台](game/webconsole/README.zh-CN.md) 可以登录、在地图上移动、聊天、使用道具、查看每一个收发的数据包，
+也可以一键检查整个流程。
 
 分布式集群（Docker）：`docker compose -f deploy/docker-compose.yml up -d --build`。
 详见 [快速上手](docs/getting-started.zh-CN.md)。
@@ -96,7 +103,7 @@ docs/         架构、协议、快速上手、构建日志
 [idgen](framework/idgen/README.zh-CN.md) · [datatable](framework/datatable/README.zh-CN.md) ·
 [bootstrap](game/bootstrap/README.zh-CN.md) · [loginsvc](game/loginsvc/README.zh-CN.md) ·
 [gamesvc](game/gamesvc/README.zh-CN.md) · [logic](game/logic/README.zh-CN.md) ·
-[repo](game/repo/README.zh-CN.md) · [proto](proto/README.zh-CN.md) · [cmd](cmd/README.zh-CN.md) ·
+[repo](game/repo/README.zh-CN.md) · [webconsole](game/webconsole/README.zh-CN.md) · [proto](proto/README.zh-CN.md) · [cmd](cmd/README.zh-CN.md) ·
 [deploy](deploy/README.zh-CN.md) · [test](test/README.zh-CN.md)
 
 ## 技术栈

@@ -8,6 +8,7 @@ package message
 
 import (
 	"fmt"
+	"slices"
 	"sync"
 
 	"google.golang.org/protobuf/proto"
@@ -75,6 +76,25 @@ func (r *Registry) ID(msg proto.Message) (uint32, bool) {
 	defer r.mu.RUnlock()
 	id, ok := r.byName[msg.ProtoReflect().Descriptor().FullName()]
 	return id, ok
+}
+
+// Each calls fn for every registered message, in ascending id order.
+// Tools use it to publish the id table (e.g. the web console schema).
+func (r *Registry) Each(fn func(id uint32, mt protoreflect.MessageType)) {
+	r.mu.RLock()
+	ids := make([]uint32, 0, len(r.byID))
+	for id := range r.byID {
+		ids = append(ids, id)
+	}
+	types := make(map[uint32]protoreflect.MessageType, len(r.byID))
+	for id, mt := range r.byID {
+		types[id] = mt
+	}
+	r.mu.RUnlock()
+	slices.Sort(ids)
+	for _, id := range ids {
+		fn(id, types[id])
+	}
 }
 
 // Encode returns msg's id and serialized bytes.

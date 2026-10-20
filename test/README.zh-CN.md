@@ -36,6 +36,20 @@ flowchart LR
 `test/cluster` 中每个节点都有自己的 NATS 连接和注册中心客户端，因此代码路径与独立进程完全一致。
 存储通过 `bootstrap.WithRepos` 共享（代替 MongoDB）。
 
+## test/webconsole —— 浏览器测试（无头 Chrome）
+
+构建服务器镜像并启动，然后用 Puppeteer 像真实用户一样操作 [网页控制台](../game/webconsole/README.zh-CN.md)：
+共 28 项检查，覆盖一键自检、通过按钮完成的手动流程、两个浏览器在地图上相遇并聊天、键盘和点击地图移动、
+顶号踢人及界面重置、可读的错误提示、密码打码、语言切换、390 像素手机布局，以及零 JavaScript 错误。
+截图和 `results.json` 输出到 `test/webconsole/out/`。
+
+```bash
+docker compose -f test/webconsole/compose.yml up --build --abort-on-container-exit --exit-code-from browser
+docker compose -f test/webconsole/compose.yml down
+```
+
+## 命令
+
 ```bash
 go test ./test/...
 go test -count=10 ./test/...       # 检查是否偶发失败

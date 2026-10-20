@@ -25,7 +25,22 @@ level=INFO msg="server started" module=app
 
 Ports: `7000` TCP clients, `7001` WebSocket (`/ws`), `127.0.0.1:9100` admin.
 
-## 3. Play with robots
+## 3. Test in the browser
+
+Open **http://127.0.0.1:9100/** (redirects to `/console/`).
+
+* Click **Run self-test**: 13 checks (connect, heartbeat, auth guard, login,
+  enter game, bag, item use, error handling, chat, movement, anti-teleport, GM,
+  disconnect) run on a separate connection; a green "All passed" means the
+  server works end to end.
+* Or play manually: Connect → Log in → Enter game, then use items, chat, and
+  move with WASD / arrow keys or by clicking the map. Every packet appears in
+  the message log.
+* Open a second window to see two players interact.
+
+Details: [game/webconsole](../game/webconsole/README.md).
+
+## 4. Play with robots
 
 In another terminal:
 
@@ -48,7 +63,7 @@ kicked:       0
 Each robot logs in, enters the game, reads its bag, uses an item, says hello in
 world chat and random-walks (you can see the AOI pushes in `pushes recv`).
 
-## 4. Inspect
+## 5. Inspect
 
 ```bash
 curl http://127.0.0.1:9100/readyz
@@ -56,7 +71,7 @@ curl -s http://127.0.0.1:9100/metrics | grep ^gs_
 go tool pprof http://127.0.0.1:9100/debug/pprof/heap
 ```
 
-## 5. Persistent storage (MongoDB)
+## 6. Persistent storage (MongoDB)
 
 ```bash
 docker compose -f deploy/docker-compose.yml up -d mongo
@@ -65,7 +80,7 @@ go run ./cmd/server -config configs/allinone-mongo.yaml
 
 Data lands in database `game`, collections `accounts` and `players`.
 
-## 6. Distributed cluster
+## 7. Distributed cluster
 
 ```bash
 docker compose -f deploy/docker-compose.yml up -d --build
@@ -89,7 +104,7 @@ go run ./cmd/server -config configs/game.yaml
 
 Stop: `docker compose -f deploy/docker-compose.yml down` (add `-v` to wipe data).
 
-## 7. Tests
+## 8. Tests
 
 ```bash
 go test ./...              # unit + e2e + distributed (embedded NATS, miniredis)
@@ -104,7 +119,7 @@ go test -run TestFullGameFlow -v ./test/e2e/
 | `test/e2e` | a full server over real TCP and WebSocket: login, AOI, bag, chat, movement, GM, duplicate login, save on disconnect and shutdown, 50 concurrent players |
 | `test/cluster` | 2 gates + 1 login + 2 game nodes over real NATS + Redis protocol: spreading, cross-node chat, cross-gate re-login, save |
 
-## 8. Configuration reference
+## 9. Configuration reference
 
 | Section | Key | Default | Description |
 |---|---|---|---|
@@ -119,6 +134,7 @@ go test -run TestFullGameFlow -v ./test/e2e/
 | `redis` | `addr` `password` `db` `pool_size` | 127.0.0.1:6379 | |
 | `mongo` | `uri` `database` `pool_size` | mongodb://127.0.0.1:27017, game | |
 | `admin` | `addr` | — (disabled) | |
+| `console` | `enabled` | false | serve the web console at `/console/` on the admin port (development only) |
 | `gate` | `tcp_addr` `ws_addr` `ws_path` | — , — , /ws | |
 | | `max_conns` `max_packet_size` `send_queue_size` | 0, 64KiB, 256 | |
 | | `idle_timeout` `rate_limit` `rate_burst` | 60s, 50, 100 | |
@@ -127,7 +143,7 @@ go test -run TestFullGameFlow -v ./test/e2e/
 
 Every value can reference environment variables: `${NAME:-default}`.
 
-## 9. Troubleshooting
+## 10. Troubleshooting
 
 | Symptom | Cause / fix |
 |---|---|

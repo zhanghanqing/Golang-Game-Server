@@ -1,0 +1,32 @@
+# Browser end-to-end test of the web console: a real server + headless Chrome.
+#
+#   docker compose -f test/webconsole/compose.yml up --build --abort-on-container-exit --exit-code-from browser
+#   docker compose -f test/webconsole/compose.yml down
+#
+# Screenshots and results.json are written to test/webconsole/out/.
+
+services:
+  server:
+    build:
+      context: ../..
+      dockerfile: deploy/Dockerfile
+    command: ["-config", "/app/configs/allinone.yaml"]
+    environment:
+      ADMIN_ADDR: 0.0.0.0:9100   # reachable from the browser container
+      LOG_LEVEL: warn
+
+  browser:
+    image: ghcr.io/puppeteer/puppeteer:24.10.0
+    depends_on: [server]
+    user: root                   # write screenshots to the bind mount
+    working_dir: /home/pptruser
+    environment:
+      NODE_PATH: /home/pptruser/node_modules
+      PUPPETEER_CACHE_DIR: /home/pptruser/.cache/puppeteer   # Chrome bundled in the image
+      CONSOLE_URL: http://server:9100/console/
+      OUT_DIR: /out
+    # Wait until the server answers /readyz, then run the test.
+    entrypoint: ["sh", "-c", "for i in $$(seq 1 60); do node -e \"fetch('http://server:9100/readyz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))\" && break; sleep 0.5; done; node /test/console.test.cjs"]
+    volumes:
+      - ./console.test.cjs:/test/console.test.cjs:ro
+      - ./out:/out

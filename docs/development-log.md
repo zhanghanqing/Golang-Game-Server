@@ -246,6 +246,37 @@ Bugs found and fixed:
 * Documentation: bilingual root README, this log, architecture, protocol,
   getting started, and a README (EN + 中文) for every module with diagrams.
 
+## Step 13 — Browser test console
+
+Goal: start the server with one command, then test it from a browser — by
+clicking, or with a single "self-test" button.
+
+Decisions:
+
+| Question | Choice | Why |
+|---|---|---|
+| Should the page also start/stop the server? | No — server is started by command | a web "start" button needs another always-running process and is a security risk; lifecycle belongs to the command line / Docker / k8s |
+| Where is the page served? | admin port, `/console/`, embedded with `go:embed` | nothing extra to deploy; enabled only in `allinone.yaml` |
+| How does the browser speak protobuf? | `schema.json` built from Go descriptors + a small JS codec | always in sync with the server, no code generation, no CDN (works offline) |
+| How is it verified? | Puppeteer (headless Chrome) in Docker against a real server | tests what a user actually does, including two browsers interacting |
+
+Built: `framework/message.Registry.Each`, `game/webconsole` (schema + handler +
+static page), `console` config section, Go unit tests, and
+`test/webconsole` (28 browser checks).
+
+Issues found by the tests and fixed before delivery:
+
+1. Error-code enums were missing from the schema: `msgid.proto` has no
+   messages, so walking "files of registered messages" skipped it. Now every
+   file of the involved packages is scanned (caught by `webconsole_test.go`).
+2. A 404 for `favicon.ico` showed up as a console error → inline SVG icon.
+3. After a kick the bag panel rendered empty instead of "not in game": the
+   views were redrawn before the state changed → order fixed, test added.
+4. The message log displayed the login password → masked, test added.
+
+Result: 28/28 browser checks, stable over 3 consecutive runs; verified
+manually on the host with `go run ./cmd/server` + `http://127.0.0.1:9100/`.
+
 ## Possible next steps
 
 1. CI pipeline: `gofmt`, `go vet`, `go test -race`, `buf lint`/`buf breaking`, image build.
