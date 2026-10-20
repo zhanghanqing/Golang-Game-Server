@@ -8,7 +8,7 @@ composes them into a root struct (see `game/bootstrap.Config`).
 
 ```mermaid
 flowchart LR
-    F[configs/game.yaml] --> E[ExpandEnv<br/>${NAME:-default}] --> Y[yaml.v3 decode<br/>KnownFields = true] --> V{Validate&#40;&#41; error?}
+    F[configs/game.yaml] --> E["ExpandEnv<br/>${NAME:-default}"] --> Y[yaml.v3 decode<br/>KnownFields = true] --> V{Validate&#40;&#41; error?}
     V -- ok --> S[root Config struct]
     V -- error --> X[exit at startup]
 ```

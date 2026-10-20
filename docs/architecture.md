@@ -220,7 +220,7 @@ sequenceDiagram
     P->>P: bind session, start save timer
     P->>G: REPLY EnterGameResp seq=2
     P->>S: Enter(42, pos, session)
-    S->>G: SceneEntityEnterPush (to 42: visible players; to them: 42)
+    S->>G: SceneEntityEnterPush (to 42: visible players, to them: 42)
     G->>C: EnterGameResp, then scene pushes
 ```
 

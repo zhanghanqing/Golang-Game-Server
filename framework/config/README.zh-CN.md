@@ -7,7 +7,7 @@
 
 ```mermaid
 flowchart LR
-    F[configs/game.yaml] --> E[ExpandEnv<br/>${NAME:-默认值}] --> Y[yaml.v3 解码<br/>KnownFields = true] --> V{Validate&#40;&#41; 出错?}
+    F[configs/game.yaml] --> E["ExpandEnv<br/>${NAME:-默认值}"] --> Y[yaml.v3 解码<br/>KnownFields = true] --> V{Validate&#40;&#41; 出错?}
     V -- 正常 --> S[根 Config 结构体]
     V -- 出错 --> X[启动时退出]
 ```
