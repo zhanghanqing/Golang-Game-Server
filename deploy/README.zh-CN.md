@@ -50,6 +50,16 @@ docker compose -f deploy/docker-compose.yml logs -f gate-1
 docker compose -f deploy/docker-compose.yml down -v
 ```
 
+## Kubernetes
+
+在 Kubernetes 上，整个集群由一个 `GameCluster` 对象描述，并由 [Operator](../operator/README.zh-CN.md) 运行：
+它按在线人数自动伸缩游戏服，并在删除节点前先排空。Helm Chart 见 [helm/gameserver](helm/gameserver/README.zh-CN.md)。
+
+```bash
+helm install gs deploy/helm/gameserver -n game --create-namespace
+kubectl get gamecluster -n game -w
+```
+
 ## 生产环境检查清单
 
 * NATS 部署为 3 节点集群，Redis 使用 Sentinel/Cluster，MongoDB 使用副本集；

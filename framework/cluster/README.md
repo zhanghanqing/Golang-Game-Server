@@ -119,6 +119,23 @@ sequenceDiagram
 A crashed node disappears within `registry_ttl`; a gracefully stopped node
 disappears immediately.
 
+### Draining nodes and `NodeAlive`
+
+A node that should receive no **new** work, but keeps serving what it has,
+registers under `DrainingService(svc)` (`game-draining`) and then leaves
+`svc`. Rendezvous hashing only looks at `svc`, so it stops choosing the node;
+`NodeAlive(reg, svc, node)` checks both keys, so existing sessions still find it.
+
+```mermaid
+flowchart LR
+    A[game-1 active<br/>in: game] -->|Drain| B[game-1 draining<br/>in: game-draining] -->|Stop: players saved| C[gone]
+```
+
+Each process caches each key separately, so for a moment a draining node
+can be missing from both caches. `NodeAlive` therefore confirms every
+negative answer against Redis (`Refresher`), reading the active key before
+the draining key — the same order in which a node moves.
+
 ## PickByKey — rendezvous hashing
 
 `PickByKey(nodes, key)` computes `score = hash(node, key)` for each node and

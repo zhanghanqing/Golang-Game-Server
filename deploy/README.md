@@ -6,6 +6,7 @@
 |---|---|
 | `Dockerfile` | multi-stage build → static `server` and `robot` binaries in a distroless, non-root image |
 | `docker-compose.yml` | full distributed cluster for local testing |
+| `helm/gameserver/` | Helm chart: Kubernetes operator, dev infrastructure, sample `GameCluster` ([README](helm/gameserver/README.md)) |
 
 ## Image
 
@@ -49,6 +50,17 @@ with a new `NODE_ID`.
 docker compose -f deploy/docker-compose.yml up -d --build
 docker compose -f deploy/docker-compose.yml logs -f gate-1
 docker compose -f deploy/docker-compose.yml down -v
+```
+
+## Kubernetes
+
+On Kubernetes the cluster is described by one `GameCluster` object and run by
+the [operator](../operator/README.md), which autoscales game nodes by online
+players and drains them before removal.
+
+```bash
+helm install gs deploy/helm/gameserver -n game --create-namespace
+kubectl get gamecluster -n game -w
 ```
 
 ## Production checklist

@@ -99,6 +99,20 @@ func (r *RedisRegistry) Nodes(service string) []string {
 	return append([]string(nil), r.cache[service]...)
 }
 
+// Refresh re-reads services from Redis now, one after another, and marks
+// them watched so the background loop keeps them fresh.
+func (r *RedisRegistry) Refresh(ctx context.Context, services ...string) error {
+	for _, svc := range services {
+		r.mu.Lock()
+		r.watched[svc] = struct{}{}
+		r.mu.Unlock()
+		if err := r.refreshOne(ctx, svc); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func (r *RedisRegistry) Start(context.Context) error {
 	ctx, cancel := context.WithCancel(context.Background())
 	r.cancel = cancel

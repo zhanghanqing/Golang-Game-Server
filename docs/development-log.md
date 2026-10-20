@@ -277,6 +277,64 @@ Issues found by the tests and fixed before delivery:
 Result: 28/28 browser checks, stable over 3 consecutive runs; verified
 manually on the host with `go run ./cmd/server` + `http://127.0.0.1:9100/`.
 
+## Step 14 — Kubernetes operator
+
+Goal: run the cluster on Kubernetes the way an SRE would — declare it once,
+let it scale with load, upgrade it with players online, survive crashes — and
+prove it on a real cluster.
+
+Decisions:
+
+| Question | Choice | Why |
+|---|---|---|
+| Deployment + HPA, or an operator? | operator (`GameCluster` CRD, controller-runtime) | game nodes hold players in memory; only something that knows player counts can choose which node to remove and wait for it to empty |
+| How are game nodes managed? | bare pods owned by the operator | StatefulSets remove the highest ordinal, Deployments a random pod |
+| How does it read load / ask a node to drain? | `GET /game/status`, `POST /game/drain` on the admin port | no metrics pipeline needed; one small surface |
+| Unique Snowflake ids for login pods? | StatefulSet, `apps.kubernetes.io/pod-index` as `WORKER_ID` | stable, unique, free |
+| Where is the decision logic? | a pure `plan()` function | every rule is a table test |
+| Separate Go module? | yes, `operator/` | the game server does not pull in Kubernetes dependencies |
+
+Game server changes the operator needed (each found by thinking through or
+testing what happens when nodes come and go):
+
+1. **Presence directory** (`game/presence`). Rendezvous hashing moves online
+   players when a node is added: a reconnect could load the same player on a
+   second node and the two copies would overwrite each other. Now login routes
+   online players to their owner, and a node must acquire a player (Lua
+   compare-and-set in Redis) before loading it.
+2. **Drain** (`gamesvc.Drain`, `game-draining` registry key): no new players,
+   existing players and their reconnects still served. `Stop` drains first and
+   deregisters only after every player is saved and released.
+3. **Lost backend detection in the gate**: a crashed node never sends kicks, so
+   its players kept a live gate connection to a dead node. The gate now kicks
+   them with the new `KICK_BACKEND_LOST`, and they log in elsewhere.
+4. **Robot `-reconnect`**: behaves like a real client during kicks.
+
+Issues found while testing, and fixed:
+
+1. Flaky integration test → a real race: during a drain, a node moves from the
+   `game` key to `game-draining`; caches refresh each key separately, so for up
+   to a second it looked dead and login took the player over on another node.
+   `cluster.NodeAlive` now confirms every "dead" answer against Redis (active
+   key first, the order in which nodes move). Regression test added.
+2. The gate's crash detection missed a node that died before the gate's first
+   check → it now snapshots the registry on start.
+3. On the real cluster the status never appeared: merge patches only carry
+   changed fields and the CRD marked counters as required → fields made
+   optional, status written with `Update` (so `players: 0` is shown too).
+4. The first e2e "crash" hit a freshly created node with almost no players →
+   the script now kills the busiest node.
+5. Docker Desktop stopped mid-run: drive C: was full (0.2 GB). Go's build cache
+   was cleared and moved to G: for this session; Docker's build cache pruned.
+
+Result: all Go tests pass (the distributed suite repeated 8×), 19 planner
+cases and 4 reconciler tests pass, and the Kubernetes end-to-end test passes
+13/13 on kind: 160 robots online the whole time, autoscale 2 → 4, the busiest
+node (88 players) force-killed and healed in 10 s, all 4 nodes upgraded in
+74 s, 0 login failures, 0 stranded robots, scale-in to 2 in 28 s, 160/160
+characters in MongoDB. A separate crash probe confirmed both gates detect the
+dead node and kick its sessions.
+
 ## Possible next steps
 
 1. CI pipeline: `gofmt`, `go vet`, `go test -race`, `buf lint`/`buf breaking`, image build.
@@ -284,4 +342,4 @@ manually on the host with `go run ./cmd/server` + `http://127.0.0.1:9100/`.
 3. Immediate save for critical operations (purchases) and an operation log.
 4. Multiple scenes / dungeon instances; scene switching.
 5. Admin GM HTTP API with authentication; config table hot reload.
-6. Kubernetes manifests (Deployment per role, readiness on `/readyz`).
+6. Kubernetes: ~~manifests~~ done as an operator (step 14); next: PodDisruptionBudget-aware eviction, operator metrics and alerts.

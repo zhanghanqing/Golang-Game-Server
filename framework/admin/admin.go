@@ -64,6 +64,14 @@ func New(cfg Config) *Server {
 // Handle lets other modules add admin endpoints (GM tools, reload hooks...).
 func (s *Server) Handle(pattern string, h http.Handler) { s.mux.Handle(pattern, h) }
 
+// Addr returns the bound listen address (useful with port 0), or nil before Start.
+func (s *Server) Addr() net.Addr {
+	if s.ln == nil {
+		return nil
+	}
+	return s.ln.Addr()
+}
+
 // SetReady flips the readiness probe.
 func (s *Server) SetReady(v bool) { s.ready.Store(v) }
 

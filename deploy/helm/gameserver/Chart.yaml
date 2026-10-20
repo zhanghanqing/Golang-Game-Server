@@ -1,0 +1,7 @@
+apiVersion: v2
+name: gameserver
+description: GameCluster operator for the Go game server, with optional dev infrastructure (NATS, Redis, MongoDB) and a sample GameCluster.
+type: application
+version: 0.1.0
+appVersion: "0.1.0"
+keywords: [game-server, operator, kubernetes, mmo]

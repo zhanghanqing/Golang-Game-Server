@@ -1,0 +1,37 @@
+{{- if .Values.gameCluster.enabled }}
+{{- $g := .Values.gameCluster }}
+apiVersion: gameserver.dev/v1alpha1
+kind: GameCluster
+metadata:
+  name: {{ $g.name }}
+  namespace: {{ .Release.Namespace }}
+  labels: {{- include "gs.labels" . | nindent 4 }}
+spec:
+  image: {{ $g.image }}
+  imagePullPolicy: {{ $g.imagePullPolicy }}
+  logLevel: {{ $g.logLevel }}
+  infra:
+    natsURL: {{ include "gs.natsURL" . | quote }}
+    redisAddr: {{ include "gs.redisAddr" . | quote }}
+    mongoURI: {{ include "gs.mongoURI" . | quote }}
+  gate:
+    replicas: {{ $g.gate.replicas }}
+    serviceType: {{ $g.gate.serviceType }}
+    console: {{ $g.gate.console }}
+  login:
+    replicas: {{ $g.login.replicas }}
+  game:
+    replicas: {{ $g.game.replicas }}
+    drainTimeout: {{ $g.game.drainTimeout }}
+    gmEnabled: {{ $g.game.gmEnabled }}
+    {{- if $g.game.autoscale.enabled }}
+    autoscale:
+      minReplicas: {{ $g.game.autoscale.minReplicas }}
+      maxReplicas: {{ $g.game.autoscale.maxReplicas }}
+      targetPlayersPerNode: {{ $g.game.autoscale.targetPlayersPerNode }}
+      scaleDownDelay: {{ $g.game.autoscale.scaleDownDelay }}
+    {{- end }}
+    {{- with $g.game.resources }}
+    resources: {{- toYaml . | nindent 6 }}
+    {{- end }}
+{{- end }}

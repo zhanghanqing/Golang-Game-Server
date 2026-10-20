@@ -40,12 +40,13 @@ flowchart LR
 ```mermaid
 stateDiagram-v2
     [*] --> Created: first FORWARD for uid
-    Created --> Loaded: EnterGameReq → load from repo (or create new character)
+    Created --> Loaded: EnterGameReq → acquire ownership (presence)<br/>→ load from repo (or create new character)
     Created --> Closed: any other request → ERR_NOT_IN_GAME, entity released
     Loaded --> Loaded: requests from the bound session<br/>periodic save (dirty)
     Loaded --> Loaded: EnterGameReq from new session<br/>kick old session (DUPLICATE_LOGIN)
     Loaded --> Closed: SESSION_CLOSED (matching session)<br/>or service Stop
-    Closed --> [*]: leave scene · save · remove · stop actor
+    Loaded --> Closed: save tick finds ownership lost<br/>(unload WITHOUT saving)
+    Closed --> [*]: leave scene · save · release ownership · remove · stop actor
 ```
 
 Key details:
@@ -59,6 +60,10 @@ Key details:
 * **Logout race** — if a request is posted to a player that logs out before
   processing it, the request is re-dispatched to a fresh player instance
   (`p.closed` check), so nothing is lost.
+* **Ownership** — before loading, the node claims the player in the
+  [presence directory](../presence/README.md); a player owned by another live
+  node is refused (`SERVICE_UNAVAILABLE`, the client retries). The claim is
+  refreshed on every save tick and released after the final save.
 * **Persistence** — handlers set `p.dirty`; an actor timer saves every
   `save_interval`; logout and service shutdown save synchronously. `Version`
   increments on each save.
@@ -96,6 +101,27 @@ sequenceDiagram
     Note over S: left: LeavePush(A) to them, LeavePush(left) to A
 ```
 
+## Drain and shutdown (used by the Kubernetes operator)
+
+| Admin endpoint (port 9100) | Effect |
+|---|---|
+| `GET /game/status` | `{"node":"game-1","players":42,"draining":false,"stopping":false}` |
+| `POST /game/drain` | stop receiving **new** players; current players keep playing and reconnects still find them |
+
+```mermaid
+stateDiagram-v2
+    direction LR
+    [*] --> Active: Start · registered as "game"
+    Active --> Draining: POST /game/drain<br/>registered as "game-draining"
+    Draining --> Stopping: SIGTERM (Stop)
+    Active --> Stopping: SIGTERM (Stop drains first)
+    Stopping --> [*]: kick SERVER_SHUTDOWN · save · release<br/>then deregister
+```
+
+`Stop` keeps the node registered (as draining) until every player is saved and
+released, so a reconnecting client is never routed elsewhere while its data
+is still being written.
+
 ## Configuration
 
 ```yaml
@@ -110,7 +136,7 @@ game:
 
 | File | Content |
 |---|---|
-| `service.go` | module lifecycle, envelope routing, player map, logout |
-| `player.go` | `Player` entity: load/create, snapshot, save, push |
+| `service.go` | module lifecycle, drain/status, envelope routing, player map, logout |
+| `player.go` | `Player` entity: ownership, load/create, snapshot, save tick, push |
 | `scene.go` | scene actor, AOI-driven pushes |
 | `handlers.go` | all request handlers + `handle` adapter |

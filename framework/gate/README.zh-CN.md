@@ -98,6 +98,7 @@ gate:
   idle_timeout: 60s        # 客户端建议每 10~20 秒发一次心跳
   rate_limit: 50           # 每会话每秒请求数
   rate_burst: 100
+  backend_check_interval: 2s   # 多久检查一次已失联的粘性后端节点，并踢掉绑定在它上面的会话
 ```
 
 ## 监控指标
@@ -106,7 +107,36 @@ gate:
 |---|---|
 | `gs_gate_sessions` | gauge（当前在线连接数） |
 | `gs_gate_packets_in_total` / `gs_gate_packets_out_total` | counter |
-| `gs_gate_rejected_total{reason}` | counter（`max_conns`、`rate_limited`、`unknown_message`、`not_authenticated`） |
+| `gs_gate_rejected_total{reason}` | counter（`max_conns`、`rate_limited`、`unknown_message`、`not_authenticated`、`backend_lost`） |
+
+## 后端节点失联
+
+粘性会话绑定在某一台游戏服上。如果这台游戏服没有经过优雅停机就死掉了（崩溃、`kill -9`、Pod 被强制删除），
+没有任何人会发踢人通知：客户端和网关的连接看起来一切正常，但每个请求都发往一台永远不会回复的机器。
+
+网关会针对每个粘性服务监视注册中心，把这类会话用 `KickPush(BACKEND_LOST)` 踢下线；
+客户端重新登录后会落到一台存活的节点上。
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant C as 客户端
+    participant G as 网关
+    participant R as Redis 注册中心
+    participant N as game-2（崩溃）
+    N-xN: 崩溃，心跳停止
+    R->>R: 注册项过期（registry_ttl）
+    loop 每隔 backend_check_interval
+      G->>R: 存活的游戏服有哪些？（缓存）
+    end
+    G->>R: game-2 不见了：再读一次存储确认
+    G->>C: KickPush(BACKEND_LOST)，断开
+    C->>G: 重新登录 → 另一台游戏服
+```
+
+* 只有**本网关曾经看到它存活**的节点才会被判定为失联，因此刚注册、还没进缓存的新节点不会被误判。
+* 排空中的节点算存活（它们登记在 `<服务名>-draining` 下）。
+* 判定"不见了"之前会回 Redis 再确认一次（`cluster.NodeAlive`），缓存过期不会导致大规模误踢。
 
 ## 优雅停机
 

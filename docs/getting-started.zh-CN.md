@@ -99,6 +99,23 @@ go run ./cmd/server -config configs/game.yaml
 
 停止：`docker compose -f deploy/docker-compose.yml down`（加 `-v` 会清空数据）。
 
+### 7b. Kubernetes（Operator）
+
+需要 Docker、[kind](https://kind.sigs.k8s.io/)、kubectl 和 Helm。
+
+```bash
+kind create cluster --name gs
+docker build -t gameserver:dev -f deploy/Dockerfile .
+docker build -t gameserver-operator:dev operator/
+kind load docker-image gameserver:dev gameserver-operator:dev --name gs
+helm install gs deploy/helm/gameserver -n game --create-namespace
+kubectl get gamecluster -n game -w        # 等到 PHASE 变为 Running
+kubectl port-forward -n game svc/demo-gate 7000:7000 7001:7001
+go run ./cmd/robot -addr 127.0.0.1:7000 -n 200 -duration 5m -reconnect   # 观察自动扩容
+```
+
+详见 [Operator](../operator/README.zh-CN.md)、[Helm Chart](../deploy/helm/gameserver/README.zh-CN.md)。
+
 ## 8. 测试
 
 ```bash
@@ -112,7 +129,9 @@ go test -run TestFullGameFlow -v ./test/e2e/
 | `framework/...` | 网络分帧、actor 语义、总线/注册中心/哈希、路由器、ID、配置、配置表 |
 | `game/logic` | AOI、背包、等级规则 |
 | `test/e2e` | 通过真实 TCP 与 WebSocket 测试完整服务器：登录、AOI、背包、聊天、移动、GM、顶号、断线与停服存盘、50 个并发玩家 |
-| `test/cluster` | 2 网关 + 1 登录 + 2 游戏节点，走真实 NATS 与 Redis 协议：玩家分布、跨节点聊天、跨网关重登、存盘 |
+| `test/cluster` | 2 网关 + 1 登录 + 2 游戏节点，走真实 NATS 与 Redis 协议：玩家分布、跨节点聊天、跨网关重登、存盘；扩容、排空、停服与崩溃接管 |
+| `operator/...` | 伸缩/排空/滚动升级规则，以及针对假 API Server 的完整调和流程（`cd operator && go test ./...`） |
+| `test/k8s` | Operator 在真实 Kubernetes 集群上运行，160 个机器人全程在线（`bash test/k8s/e2e.sh`） |
 
 ## 9. 配置参考
 

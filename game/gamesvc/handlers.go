@@ -71,6 +71,14 @@ func (s *Service) registerHandlers() {
 
 func (s *Service) handleEnterGame(p *Player, c *router.Context, req *pb.EnterGameReq) (proto.Message, error) {
 	if !p.loaded() {
+		if s.stopping.Load() {
+			s.logout(p)
+			return nil, errcode.ErrServiceUnavailable
+		}
+		if err := p.acquireOwnership(c); err != nil {
+			s.logout(p)
+			return nil, err
+		}
 		if err := p.load(c, strings.TrimSpace(req.Name)); err != nil {
 			s.logout(p) // do not keep a half-initialized entity around
 			return nil, err

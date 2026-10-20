@@ -36,12 +36,13 @@ flowchart LR
 ```mermaid
 stateDiagram-v2
     [*] --> Created: 该 uid 的第一个 FORWARD
-    Created --> Loaded: EnterGameReq → 从仓储加载（或创建新角色）
+    Created --> Loaded: EnterGameReq → 获取归属（presence）<br/>→ 从仓储加载（或创建新角色）
     Created --> Closed: 其他请求 → ERR_NOT_IN_GAME，释放实体
     Loaded --> Loaded: 来自绑定会话的请求<br/>定时保存（有脏数据时）
     Loaded --> Loaded: 新会话的 EnterGameReq<br/>踢掉旧会话（DUPLICATE_LOGIN）
     Loaded --> Closed: SESSION_CLOSED（会话匹配）<br/>或服务停止
-    Closed --> [*]: 离开场景 · 保存 · 移除 · 停止 actor
+    Loaded --> Closed: 存盘周期发现归属已丢失<br/>（卸载且不存盘）
+    Closed --> [*]: 离开场景 · 保存 · 释放归属 · 移除 · 停止 actor
 ```
 
 关键细节：
@@ -52,6 +53,9 @@ stateDiagram-v2
   `SESSION_CLOSED` 因会话 ID 不匹配而被忽略。
 * **下线竞态** —— 如果请求投递给了一个在处理前就已下线的玩家，该请求会被重新分发到新的玩家实例
   （通过 `p.closed` 判断），不会丢失。
+* **归属** —— 加载之前，节点要先在[归属目录 presence](../presence/README.zh-CN.md) 中认领该玩家；
+  如果玩家归另一台存活节点所有，则拒绝（`SERVICE_UNAVAILABLE`，客户端重试）。
+  归属在每个存盘周期刷新，在最后一次存盘后释放。
 * **持久化** —— 处理器设置 `p.dirty`；actor 定时器每 `save_interval` 保存一次；下线和停服时同步保存。
   每次保存 `Version` 自增。
 
@@ -87,6 +91,26 @@ sequenceDiagram
     Note over S: left：向他们发 LeavePush(A)，向 A 发 LeavePush(left)
 ```
 
+## 排空与停机（供 Kubernetes Operator 使用）
+
+| 管理端点（9100 端口） | 作用 |
+|---|---|
+| `GET /game/status` | `{"node":"game-1","players":42,"draining":false,"stopping":false}` |
+| `POST /game/drain` | 不再接收**新**玩家；现有玩家照常游戏，重连也仍会回到这里 |
+
+```mermaid
+stateDiagram-v2
+    direction LR
+    [*] --> Active: 启动 · 登记为 "game"
+    Active --> Draining: POST /game/drain<br/>改登记为 "game-draining"
+    Draining --> Stopping: SIGTERM（Stop）
+    Active --> Stopping: SIGTERM（Stop 会先排空）
+    Stopping --> [*]: 踢人 SERVER_SHUTDOWN · 存盘 · 释放归属<br/>最后注销
+```
+
+`Stop` 会一直保持节点处于（排空中的）登记状态，直到每个玩家都存盘并释放归属，
+这样客户端重连时，不会在数据还没写完的情况下被路由到别的节点。
+
 ## 配置
 
 ```yaml
@@ -101,7 +125,7 @@ game:
 
 | 文件 | 内容 |
 |---|---|
-| `service.go` | 模块生命周期、信封路由、玩家表、下线 |
-| `player.go` | `Player` 实体：加载/创建、快照、保存、推送 |
+| `service.go` | 模块生命周期、排空/状态、信封路由、玩家表、下线 |
+| `player.go` | `Player` 实体：归属、加载/创建、快照、存盘周期、推送 |
 | `scene.go` | 场景 actor、基于 AOI 的推送 |
 | `handlers.go` | 所有请求处理器 + `handle` 适配器 |

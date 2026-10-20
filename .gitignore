@@ -7,3 +7,4 @@ coverage.*
 .vscode/
 .DS_Store
 /test/webconsole/out/
+/test/k8s/out/

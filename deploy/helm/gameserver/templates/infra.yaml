@@ -1,0 +1,84 @@
+{{- if .Values.infra.enabled }}
+{{- /* Single-pod dependencies for development. Use managed services or HA charts in production. */}}
+{{- $root := . }}
+{{- $services := dict
+      "nats"  (dict "image" .Values.infra.nats.image  "port" 4222  "args" (list))
+      "redis" (dict "image" .Values.infra.redis.image "port" 6379  "args" (list "--save" "" "--appendonly" "no"))
+      "mongo" (dict "image" .Values.infra.mongo.image "port" 27017 "args" (list)) }}
+{{- range $name, $c := $services }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ $root.Release.Name }}-{{ $name }}
+  namespace: {{ $root.Release.Namespace }}
+  labels:
+    {{- include "gs.labels" $root | nindent 4 }}
+    app.kubernetes.io/name: {{ $name }}
+spec:
+  replicas: 1
+  strategy: { type: Recreate }
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: {{ $name }}
+      app.kubernetes.io/instance: {{ $root.Release.Name }}
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: {{ $name }}
+        app.kubernetes.io/instance: {{ $root.Release.Name }}
+    spec:
+      containers:
+        - name: {{ $name }}
+          image: {{ $c.image }}
+          {{- with $c.args }}
+          args: {{- toYaml . | nindent 12 }}
+          {{- end }}
+          ports:
+            - containerPort: {{ $c.port }}
+          readinessProbe:
+            tcpSocket: { port: {{ $c.port }} }
+            periodSeconds: 5
+          {{- if eq $name "mongo" }}
+          volumeMounts:
+            - { name: data, mountPath: /data/db }
+          {{- end }}
+      {{- if eq $name "mongo" }}
+      volumes:
+        - name: data
+          {{- if $root.Values.infra.mongo.persistence }}
+          persistentVolumeClaim: { claimName: {{ $root.Release.Name }}-mongo }
+          {{- else }}
+          emptyDir: {}
+          {{- end }}
+      {{- end }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $root.Release.Name }}-{{ $name }}
+  namespace: {{ $root.Release.Namespace }}
+  labels: {{- include "gs.labels" $root | nindent 4 }}
+spec:
+  selector:
+    app.kubernetes.io/name: {{ $name }}
+    app.kubernetes.io/instance: {{ $root.Release.Name }}
+  ports:
+    - port: {{ $c.port }}
+      targetPort: {{ $c.port }}
+{{- end }}
+{{- if .Values.infra.mongo.persistence }}
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ .Release.Name }}-mongo
+  namespace: {{ .Release.Namespace }}
+  labels: {{- include "gs.labels" . | nindent 4 }}
+spec:
+  accessModes: [ReadWriteOnce]
+  resources:
+    requests:
+      storage: {{ .Values.infra.mongo.storageSize }}
+{{- end }}
+{{- end }}

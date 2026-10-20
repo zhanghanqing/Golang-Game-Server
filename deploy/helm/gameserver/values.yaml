@@ -1,0 +1,65 @@
+# Default values for the gameserver chart.
+# Three independent parts; turn each on or off:
+#   operator     the GameCluster controller (always needed)
+#   infra        single-pod NATS, Redis and MongoDB for development (use managed services in production)
+#   gameCluster  a sample GameCluster that uses the infra above
+
+operator:
+  image:
+    repository: gameserver-operator
+    tag: dev
+    pullPolicy: IfNotPresent
+  replicas: 1
+  # Several replicas need leader election: only one reconciles at a time.
+  leaderElect: true
+  # How often game node player counts are refreshed.
+  pollInterval: 5s
+  logLevel: info
+  resources:
+    requests: { cpu: 50m, memory: 64Mi }
+    limits: { memory: 256Mi }
+
+infra:
+  enabled: true
+  nats:
+    image: nats:2.10
+  redis:
+    image: redis:7-alpine
+  mongo:
+    image: mongo:7
+    # false: emptyDir (data is lost with the pod). true: a PersistentVolumeClaim.
+    persistence: false
+    storageSize: 5Gi
+
+gameCluster:
+  enabled: true
+  name: demo
+  image: gameserver:dev
+  imagePullPolicy: IfNotPresent
+  logLevel: info
+  gate:
+    replicas: 2
+    serviceType: ClusterIP
+    # Serve the browser test console on the gate admin port (9100). Dev/QA only.
+    console: true
+  login:
+    replicas: 2
+  game:
+    # Fixed size, used when autoscale.enabled is false.
+    replicas: 2
+    autoscale:
+      enabled: true
+      minReplicas: 2
+      maxReplicas: 6
+      targetPlayersPerNode: 50
+      scaleDownDelay: 2m
+    drainTimeout: 2m
+    gmEnabled: true
+    resources:
+      requests: { cpu: 50m, memory: 64Mi }
+      limits: { memory: 256Mi }
+  # Used only when infra.enabled is false.
+  externalInfra:
+    natsURL: nats://nats:4222
+    redisAddr: redis:6379
+    mongoURI: mongodb://mongo:27017

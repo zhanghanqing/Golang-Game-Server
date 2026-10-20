@@ -1,0 +1,19 @@
+GameCluster operator installed in namespace {{ .Release.Namespace }}.
+{{- if .Values.gameCluster.enabled }}
+
+Watch the cluster come up:
+  kubectl get gamecluster {{ .Values.gameCluster.name }} -n {{ .Release.Namespace }} -w
+
+Game nodes and their players:
+  kubectl get gamecluster {{ .Values.gameCluster.name }} -n {{ .Release.Namespace }} -o yaml
+
+Scaling and drain decisions:
+  kubectl get events -n {{ .Release.Namespace }} --field-selector involvedObject.kind=GameCluster
+
+Connect a client from your machine:
+  kubectl port-forward -n {{ .Release.Namespace }} svc/{{ .Values.gameCluster.name }}-gate 7000:7000 7001:7001
+{{- if .Values.gameCluster.gate.console }}
+  kubectl port-forward -n {{ .Release.Namespace }} deploy/{{ .Values.gameCluster.name }}-gate 9100:9100
+  then open http://127.0.0.1:9100/ (browser test console)
+{{- end }}
+{{- end }}

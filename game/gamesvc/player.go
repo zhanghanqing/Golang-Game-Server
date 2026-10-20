@@ -9,10 +9,13 @@ import (
 	"google.golang.org/protobuf/proto"
 
 	"gameserver/framework/actor"
+	"gameserver/framework/errcode"
+	"gameserver/framework/pb/syspb"
 	"gameserver/framework/router"
 	"gameserver/game/logic/bag"
 	"gameserver/game/model"
 	"gameserver/game/pb"
+	"gameserver/game/presence"
 	"gameserver/game/repo"
 )
 
@@ -37,6 +40,7 @@ type Player struct {
 
 	dirty     bool
 	closed    bool
+	owned     bool // this node holds the presence entry
 	inScene   bool
 	lastChat  time.Time
 	saveTimer *actor.Timer
@@ -88,8 +92,66 @@ func (p *Player) load(ctx context.Context, name string) error {
 		stacks[i] = bag.Stack{ID: it.ID, Count: it.Count}
 	}
 	p.bag = bag.New(stacks)
-	p.saveTimer = p.actor.Every(p.svc.cfg.SaveInterval, p.save)
+	p.saveTimer = p.actor.Every(p.svc.cfg.SaveInterval, p.tick)
 	return nil
+}
+
+// errOwnedElsewhere means another live node still hosts the player, e.g. it
+// is finishing a save after a disconnect. The client simply retries.
+var errOwnedElsewhere = errcode.New(errcode.ErrServiceUnavailable.Code, "player is still online on another node, retry shortly")
+
+// acquireOwnership claims the presence entry before the player is loaded.
+// A stale entry left by a dead node is taken over.
+func (p *Player) acquireOwnership(ctx context.Context) error {
+	self := p.svc.cluster.NodeID()
+	owner, err := p.svc.presence.Acquire(ctx, p.uid, self)
+	if err != nil {
+		return err
+	}
+	if owner != self {
+		if presence.GameNodeAlive(p.svc.cluster.Registry(), owner) {
+			p.svc.logger.Warn("player owned by another node", "uid", p.uid, "owner", owner)
+			return errOwnedElsewhere
+		}
+		if owner, err = p.svc.presence.Takeover(ctx, p.uid, owner, self); err != nil {
+			return err
+		}
+		if owner != self {
+			return errOwnedElsewhere
+		}
+		p.svc.logger.Info("took over player from dead node", "uid", p.uid)
+	}
+	p.owned = true
+	return nil
+}
+
+func (p *Player) releaseOwnership() {
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	if err := p.svc.presence.Release(ctx, p.uid, p.svc.cluster.NodeID()); err != nil {
+		p.svc.logger.Warn("release presence failed", "uid", p.uid, "err", err)
+	}
+	p.owned = false
+}
+
+// tick runs every SaveInterval: flush changes and refresh ownership. If the
+// entry was lost (it expired and another node claimed the player), this copy
+// is stale: drop it without saving so it cannot overwrite newer data.
+func (p *Player) tick() {
+	p.save()
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	owner, err := p.svc.presence.Acquire(ctx, p.uid, p.svc.cluster.NodeID())
+	if err != nil || owner == p.svc.cluster.NodeID() {
+		return // a transient error is retried on the next tick
+	}
+	p.svc.logger.Error("lost player ownership, unloading stale copy", "uid", p.uid, "owner", owner)
+	if p.session.Valid() {
+		_ = p.svc.router.Kick(p.session, syspb.KickReason_KICK_DUPLICATE_LOGIN)
+	}
+	p.owned = false
+	p.dirty = false
+	p.svc.logout(p)
 }
 
 // snapshot copies in-memory state into a document for persistence.

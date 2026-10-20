@@ -2,13 +2,17 @@
 //
 // Each robot logs in, enters the game, inspects its bag, uses an item, says
 // hello in world chat and then walks around randomly until the test ends.
+// With -reconnect, a robot that is kicked or disconnected logs in again, like
+// a real client would; this is how players move off a game node that shuts down.
 //
 //	go run ./cmd/robot -addr 127.0.0.1:7000 -n 100 -duration 30s
 //	go run ./cmd/robot -ws ws://127.0.0.1:7001/ws -n 10
+//	go run ./cmd/robot -addr 127.0.0.1:7000 -n 200 -duration 10m -reconnect
 package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"log/slog"
@@ -35,6 +39,10 @@ type stats struct {
 	pushes    atomic.Int64
 	kicked    atomic.Int64
 	latencyNs atomic.Int64
+	// reconnects counts successful re-entries after a kick or disconnect.
+	reconnects atomic.Int64
+	// gaveUp counts robots that lost the session and never got back in.
+	gaveUp atomic.Int64
 }
 
 func main() {
@@ -46,6 +54,7 @@ func main() {
 	duration := flag.Duration("duration", 15*time.Second, "how long each robot stays online")
 	moveEvery := flag.Duration("move-interval", 500*time.Millisecond, "time between moves")
 	ramp := flag.Duration("ramp", 5*time.Millisecond, "delay between robot starts")
+	reconnect := flag.Bool("reconnect", false, "log in again after a kick or disconnect until -duration ends")
 	flag.Parse()
 
 	st := &stats{}
@@ -59,7 +68,13 @@ func main() {
 				id: i, account: fmt.Sprintf("%s_%d", *prefix, i), password: *password,
 				addr: *addr, ws: *wsURL, st: st, moveEvery: *moveEvery,
 			}
-			if err := r.run(*duration); err != nil {
+			var err error
+			if *reconnect {
+				err = r.runWithReconnect(*duration)
+			} else {
+				err = r.run(*duration)
+			}
+			if err != nil {
 				slog.Warn("robot failed", "robot", i, "err", err)
 			}
 		}(i)
@@ -80,7 +95,11 @@ func main() {
 	fmt.Printf("avg latency:  %s\n", avg)
 	fmt.Printf("pushes recv:  %d\n", st.pushes.Load())
 	fmt.Printf("kicked:       %d\n", st.kicked.Load())
-	if st.loginFail.Load() > 0 {
+	if *reconnect {
+		fmt.Printf("reconnects:   %d\n", st.reconnects.Load())
+		fmt.Printf("gave up:      %d\n", st.gaveUp.Load())
+	}
+	if st.loginFail.Load() > 0 || st.gaveUp.Load() > 0 {
 		os.Exit(1)
 	}
 }
@@ -108,7 +127,52 @@ func (r *robot) call(req proto.Message) (proto.Message, error) {
 	return resp, err
 }
 
+// run plays one session; a failed login or enter counts as a login failure.
 func (r *robot) run(duration time.Duration) error {
+	entered, err := r.session(time.Now().Add(duration))
+	if !entered {
+		r.st.loginFail.Add(1)
+	}
+	return err
+}
+
+// runWithReconnect keeps the robot in the game until duration ends, logging
+// in again (with a short random backoff) whenever the session ends early.
+func (r *robot) runWithReconnect(duration time.Duration) error {
+	deadline := time.Now().Add(duration)
+	sessions := 0
+	var lastErr error
+	for time.Now().Before(deadline) {
+		entered, err := r.session(deadline)
+		if entered {
+			if sessions > 0 {
+				r.st.reconnects.Add(1)
+			}
+			sessions++
+		}
+		if err == nil {
+			return nil // played until the deadline
+		}
+		lastErr = err
+		time.Sleep(time.Duration(300+rand.IntN(700)) * time.Millisecond)
+	}
+	switch {
+	case sessions == 0:
+		r.st.loginFail.Add(1)
+	case lastErr != nil && !errors.Is(lastErr, errSessionEnded):
+		// The last attempt was a failed login: the robot ended outside the game.
+		r.st.gaveUp.Add(1)
+	}
+	return lastErr
+}
+
+// errSessionEnded means the server closed a session that was in the game.
+var errSessionEnded = errors.New("session ended by server")
+
+// session connects, logs in, enters the game and plays until deadline. It
+// returns whether the robot entered the game, and nil only if it stayed in
+// until the deadline.
+func (r *robot) session(deadline time.Time) (bool, error) {
 	opts := client.Options{
 		Registry: protocol.Registry(),
 		OnPush: func(id uint32, msg proto.Message) {
@@ -126,20 +190,17 @@ func (r *robot) run(duration time.Duration) error {
 		r.c, err = client.DialTCP(r.addr, opts)
 	}
 	if err != nil {
-		r.st.loginFail.Add(1)
-		return err
+		return false, err
 	}
 	defer r.c.Close()
 	r.c.StartHeartbeat(10 * time.Second)
 
 	if _, err := r.call(&pb.LoginReq{Account: r.account, Password: r.password, ClientVersion: "robot-1.0"}); err != nil {
-		r.st.loginFail.Add(1)
-		return fmt.Errorf("login: %w", err)
+		return false, fmt.Errorf("login: %w", err)
 	}
 	resp, err := r.call(&pb.EnterGameReq{Name: r.account})
 	if err != nil {
-		r.st.loginFail.Add(1)
-		return fmt.Errorf("enter: %w", err)
+		return false, fmt.Errorf("enter: %w", err)
 	}
 	r.st.loginOK.Add(1)
 	enter := resp.(*pb.EnterGameResp)
@@ -149,15 +210,15 @@ func (r *robot) run(duration time.Duration) error {
 	_, _ = r.call(&pb.ItemUseReq{ItemId: 1002, Count: 1})
 	_, _ = r.call(&pb.ChatSendReq{Channel: pb.ChatChannel_CHAT_CHANNEL_WORLD, Text: "hello from " + r.account})
 
-	deadline := time.After(duration)
+	timeout := time.After(time.Until(deadline))
 	ticker := time.NewTicker(r.moveEvery)
 	defer ticker.Stop()
 	for {
 		select {
-		case <-deadline:
-			return nil
+		case <-timeout:
+			return true, nil
 		case <-r.c.Done():
-			return r.c.Err()
+			return true, errSessionEnded
 		case <-ticker.C:
 			// Random walk inside the world bounds, within the allowed step.
 			nx := clamp(x+float32(rand.IntN(41)-20), 0, gamesvc.WorldWidth-1)

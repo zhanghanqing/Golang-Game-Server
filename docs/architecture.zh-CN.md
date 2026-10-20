@@ -115,6 +115,26 @@ flowchart TB
 | Redis | 带 TTL 的注册条目 | Sentinel / Cluster | 路由使用最后一次缓存的视图 |
 | MongoDB | 账号、玩家 | 副本集 / 按 `_id` 分片 | 存盘重试（玩家保持脏标记） |
 
+### 3.3 Kubernetes（Operator）
+
+上面的分布式拓扑，用一个 `GameCluster` 对象描述，由 [Operator](../operator/README.zh-CN.md) 运行：
+
+```mermaid
+flowchart LR
+    GC([GameCluster]) --> OP[Operator]
+    OP --> GD[网关 Deployment + Service]
+    OP --> LS[登录服 StatefulSet<br/>Pod 序号 = 雪花 worker id]
+    OP --> GP["游戏服 Pod，逐个管理<br/>按在线人数自动伸缩"]
+    OP -. "GET /game/status · POST /game/drain" .-> GP
+```
+
+| 事件 | 发生什么 |
+|---|---|
+| 玩家增多 | 节点数 = `ceil(在线人数 / targetPlayersPerNode)`，新节点立即创建 |
+| 玩家减少 | 经过 `scaleDownDelay` 后，人最少的节点开始排空，变空或超过 `drainTimeout` 后删除 |
+| 新镜像或新配置 | 滚动升级：加一台、排空一台旧的，循环 |
+| 游戏服 Pod 崩溃 | 被替换；网关踢掉它的会话（`BACKEND_LOST`）；玩家到别处重新登录 |
+
 ---
 
 ## 4. 组件
@@ -364,11 +384,17 @@ flowchart LR
 
 ### 8.2 玩家分配到游戏节点
 
+先查[归属目录](../game/presence/README.zh-CN.md)：已经在线的玩家回到持有它的节点（正常或排空中）。
+只有不在线的玩家才做哈希：
+
 `PickByKey(registry.Nodes("game"), uid)` —— 最高随机权重哈希：
 
 * 确定性：节点集合不变时，同一 uid → 同一节点；
 * 增加 `game-4` 只会迁移约 1/4 的 uid（只影响*新*登录：在线玩家在下线前保持原地）；
-* 移除一个节点只会迁移它自己的 uid。
+* 移除一个节点只会迁移它自己的 uid；
+* 排空中的节点登记在 `game-draining` 下，哈希会跳过它们，但它们自己的玩家仍能找到它们。
+
+游戏节点加载玩家之前必须先获取该玩家的归属记录，所以即使节点不断加入和退出，同一个玩家也绝不会被加载到两个节点上。
 
 ### 8.3 注册中心
 
@@ -384,10 +410,11 @@ flowchart LR
 | 账号 | MongoDB `accounts` | 登录服 | 首次登录 |
 | 玩家 | MongoDB `players` | 游戏服 | 每 `save_interval`（有脏数据时）、下线、停服 |
 | 服务注册 | Redis `gs:registry:*` | 每个节点 | 心跳 |
+| 归属（在线玩家归谁） | Redis `gs:presence:<uid>` | 游戏服 | 加载、每个存盘周期、下线 |
 | 静态配置表 | 二进制（`go:embed`） | 策划 | 构建时 |
 
 * **脏标记 + 延迟写回**：玩法只修改内存；按玩家批量存盘。这是 MMO 的标准做法 —— 数据库压力与玩家数成正比，而不是与操作次数成正比。
-* **单一写者**：一个玩家只会加载在一个节点上，因此同一文档不会有并发写入。
+* **单一写者**：一个玩家只会加载在一个节点上——由归属目录（Redis 比较并设置）保证——因此同一文档不会有并发写入。
 * **持久化窗口**：游戏节点崩溃最多丢失该节点 `save_interval` 内的进度。可调低以提高安全性；
   对关键事件（充值）在处理器中立即存盘 —— 见 §15。
 
@@ -406,7 +433,8 @@ flowchart LR
 | 无状态路由的后端未运行 | 注册中心为空 | `SERVICE_UNAVAILABLE` |
 | 数据库存盘失败 | 仓储返回错误 | 记录日志，保持脏标记，下次重试 |
 | NATS 断开 | 客户端回调 | 自动退避重连 |
-| 节点崩溃 | 注册中心 TTL | 移出路由；其玩家重连后重新分配 |
+| 节点崩溃 | 注册中心 TTL | 移出路由；网关踢掉它的会话（`BACKEND_LOST`）；玩家重新登录，新节点接管他们的归属记录 |
+| 节点被排空（缩容、升级） | `POST /game/drain` | 不再接新玩家；现有玩家留到自己离开或节点停机（存盘、踢人、到别处重连） |
 | SIGTERM | `app.Run` | 有序优雅停机（§6.7） |
 | 请求发给了刚下线的玩家 | `p.closed` | 请求重新分发到新实例 |
 
@@ -464,7 +492,7 @@ TLS：在负载均衡上终止 TLS（浏览器用 WSS），或用 `crypto/tls` �
 |---|---|---|
 | 连接数 / 带宽 | 网关 CPU 高、`gs_gate_sessions` 高 | 加网关 |
 | 登录 CPU（bcrypt） | 登录延迟高 | 加登录节点 |
-| 单游戏节点玩家过多 | 游戏服 CPU / 内存高 | 加游戏节点（新登录自动均衡） |
+| 单游戏节点玩家过多 | 游戏服 CPU / 内存高 | 加游戏节点（新登录自动均衡）；在 Kubernetes 上由 Operator 按 `targetPlayersPerNode` 自动完成 |
 | 单个场景过于拥挤 | 场景 actor 延迟高 | 把地图拆成多个场景/分线 |
 | 数据库写入 | 存盘延迟高 | 调大 `save_interval`，Mongo 按 `_id` 分片 |
 | 总线 | NATS CPU 高 | NATS 集群；保持信封精简 |
@@ -498,6 +526,8 @@ TLS：在负载均衡上终止 TLS（浏览器用 WSS），或用 `crypto/tls` �
 | 每玩家一个 actor | 全局锁、分段锁 | 玩法代码无锁，天然按玩家有序 |
 | 无界邮箱 | 有界 channel | 互相投递不会死锁；过载在网关控制 |
 | HRW 哈希 | 一致性哈希环、中心分配器 | 简单、无状态、扰动最小、无需额外服务 |
+| 在哈希之上加归属目录 | 只用哈希 | 只用哈希时，节点加入或排空会让在线玩家换节点；归属目录保证每个玩家只有一个持有者 |
+| Kubernetes Operator + 裸游戏服 Pod | Deployment + HPA、StatefulSet | 只有 Operator 知道每台的人数，也只有它能决定排空哪台、何时删除 |
 | 整文档存盘 + 脏标记 | 按字段更新、事件溯源 | 简单可靠；每个玩家只有一个写者 |
 | Protobuf + 显式 ID 表 | JSON、基于反射的 ID | 紧凑、跨语言、契约显式且可评审 |
 | `log/slog` | zap、logrus | 标准库、结构化、足够快 |
@@ -515,10 +545,13 @@ TLS：在负载均衡上终止 TLS（浏览器用 WSS），或用 `crypto/tls` �
 ├── game/                MMO 示例业务层（见 game/README.zh-CN.md）
 ├── proto/               .proto 源文件（framework/ 与 game/）
 ├── configs/             allinone、allinone-mongo、gate、login、game
-├── deploy/              Dockerfile、docker-compose.yml
+├── operator/            Kubernetes Operator（独立 Go 模块，见 operator/README.zh-CN.md）
+├── deploy/              Dockerfile、docker-compose.yml、helm/gameserver
 ├── test/
 │   ├── e2e/             通过真实 TCP/WS 测试完整服务器
-│   └── cluster/         内嵌 NATS + miniredis 的分布式拓扑测试
+│   ├── cluster/         内嵌 NATS + miniredis 的分布式拓扑测试
+│   ├── webconsole/      由无头 Chrome 驱动的浏览器控制台测试
+│   └── k8s/             Operator 在真实 Kubernetes 集群上的端到端测试
 ├── docs/                架构、协议、快速上手、构建日志
 ├── buf.yaml、buf.gen.yaml
 └── Makefile

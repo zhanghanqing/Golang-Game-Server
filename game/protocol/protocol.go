@@ -5,6 +5,7 @@ package protocol
 import (
 	"sync"
 
+	"gameserver/framework/cluster"
 	"gameserver/framework/gate"
 	"gameserver/framework/message"
 	"gameserver/game/pb"
@@ -15,6 +16,11 @@ const (
 	ServiceLogin = "login"
 	ServiceGame  = "game"
 )
+
+// ServiceGameDraining is the registry key of game nodes that are draining:
+// they keep serving the players they already host, but login no longer
+// assigns new players to them. Nodes move here before shutdown.
+var ServiceGameDraining = cluster.DrainingService(ServiceGame)
 
 var (
 	once sync.Once

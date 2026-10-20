@@ -13,6 +13,7 @@ package bootstrap
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net"
@@ -30,6 +31,7 @@ import (
 	"gameserver/game/gamedata"
 	"gameserver/game/gamesvc"
 	"gameserver/game/loginsvc"
+	"gameserver/game/presence"
 	"gameserver/game/protocol"
 	"gameserver/game/repo"
 	"gameserver/game/webconsole"
@@ -169,10 +171,15 @@ func Build(cfg *Config, opts ...Option) (*Server, error) {
 		return nil, fmt.Errorf("unknown storage driver %q", cfg.Storage.Driver)
 	}
 
+	// Presence must be shared by every login and game node, so it lives in
+	// Redis whenever the cluster spans processes.
+	var dir presence.Directory
 	if rdb != nil {
 		s.Cluster = cluster.New(cfg.Node.ID, cfg.Cluster, rdb.Client())
+		dir = presence.NewRedis(rdb.Client(), 0)
 	} else {
 		s.Cluster = cluster.New(cfg.Node.ID, cfg.Cluster, nil)
+		dir = presence.NewMemory(0)
 	}
 	s.Admin = admin.New(cfg.Admin)
 	s.App.Add(s.Cluster, s.Admin)
@@ -186,15 +193,16 @@ func Build(cfg *Config, opts ...Option) (*Server, error) {
 	}
 
 	if cfg.Has(RoleGame) {
-		s.Game = gamesvc.New(cfg.Game, s.Cluster, reg, s.Players, tables)
+		s.Game = gamesvc.New(cfg.Game, s.Cluster, reg, s.Players, dir, tables)
 		s.App.Add(s.Game)
+		mountGameOps(s.Admin, s.Game)
 	}
 	if cfg.Has(RoleLogin) {
 		ids, err := idgen.NewSnowflake(cfg.Node.WorkerID)
 		if err != nil {
 			return nil, err
 		}
-		s.Login = loginsvc.New(cfg.Login, s.Cluster, reg, s.Accounts, ids)
+		s.Login = loginsvc.New(cfg.Login, s.Cluster, reg, s.Accounts, dir, ids)
 		s.App.Add(s.Login)
 	}
 	if cfg.Has(RoleGate) {
@@ -219,4 +227,27 @@ func mountConsole(adm *admin.Server, cfg *Config, tables *gamedata.Tables) {
 	}
 	adm.Handle(webconsole.Prefix, webconsole.Handler(protocol.Registry(), opts))
 	adm.Handle("/{$}", http.RedirectHandler(webconsole.Prefix, http.StatusFound))
+}
+
+// mountGameOps adds the endpoints used by the Kubernetes operator:
+//
+//	GET  /game/status  {"node":"game-1","players":42,"draining":false,"stopping":false}
+//	POST /game/drain   stop receiving new players; returns the new status
+//
+// They live on the internal admin port, like /metrics.
+func mountGameOps(adm *admin.Server, g *gamesvc.Service) {
+	writeStatus := func(w http.ResponseWriter) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(g.Status())
+	}
+	adm.Handle("GET /game/status", http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		writeStatus(w)
+	}))
+	adm.Handle("POST /game/drain", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := g.Drain(r.Context()); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		writeStatus(w)
+	}))
 }

@@ -34,6 +34,7 @@ go run ./cmd/robot [flags]
 | `-duration` | 15s | time each robot stays online |
 | `-move-interval` | 500ms | time between moves |
 | `-ramp` | 5ms | delay between robot starts (avoid a login thundering herd) |
+| `-reconnect` | false | after a kick or disconnect, log in again (300–1000 ms backoff) until `-duration` ends — like a real client |
 
 ```mermaid
 flowchart LR
@@ -43,5 +44,8 @@ flowchart LR
 ```
 
 The final report shows successful logins, request count and errors, average
-latency, pushes received and kicks. The process exits with code 1 if any login
-failed, so it can gate a deployment pipeline.
+latency, pushes received and kicks; with `-reconnect` also `reconnects` and
+`gave up` (robots that lost the session and never got back in). The process
+exits with code 1 if any login failed or any robot gave up, so it can gate a
+deployment pipeline. The Kubernetes test runs it as a Job during scale-out,
+node crash and rolling update ([test/k8s](../test/k8s/README.md)).

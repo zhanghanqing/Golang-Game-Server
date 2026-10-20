@@ -116,6 +116,21 @@ sequenceDiagram
 
 崩溃的节点会在 `registry_ttl` 内消失；正常停机的节点会立刻消失。
 
+### 排空节点与 `NodeAlive`
+
+不再接收**新**工作、但继续服务已有会话的节点，会先登记到 `DrainingService(svc)`（即 `game-draining`），
+再从 `svc` 下注销。Rendezvous 哈希只看 `svc`，所以不会再选中它；
+`NodeAlive(reg, svc, node)` 两个 key 都会查，所以已有会话仍然能找到它。
+
+```mermaid
+flowchart LR
+    A[game-1 正常<br/>登记在 game] -->|Drain| B[game-1 排空中<br/>登记在 game-draining] -->|Stop：玩家已存盘| C[下线]
+```
+
+每个进程对每个 key 分别缓存，所以排空中的节点可能短暂地在两份缓存里都找不到。
+因此 `NodeAlive` 对每个"不存活"的结论都会回 Redis 确认（`Refresher`），
+并且先读正常 key、再读排空 key —— 与节点迁移的顺序一致。
+
 ## PickByKey —— 最高随机权重（Rendezvous）哈希
 
 `PickByKey(nodes, key)` 对每个节点计算 `score = hash(node, key)`，取最大者。

@@ -26,8 +26,13 @@ sequenceDiagram
     else found
         L->>L: bcrypt.Compare
     end
-    L->>R: Nodes("game")
-    L->>L: node = PickByKey(nodes, uid)
+    L->>R: presence Owner(uid)
+    alt online on a live node (active or draining)
+        L->>L: node = owner
+    else not online
+        L->>R: Nodes("game")  (active only)
+        L->>L: node = PickByKey(nodes, uid)
+    end
     L->>G: BIND {uid, routes: {game: node}}
     L->>G: REPLY LoginResp{uid, new_account}
     G->>C: LoginResp
@@ -42,6 +47,10 @@ sequenceDiagram
 | password matches stored bcrypt hash | `ERR_WRONG_PASSWORD` |
 | session not already logged in | `BAD_REQUEST` |
 | at least one game node registered | `SERVICE_UNAVAILABLE` |
+| presence directory readable (fail closed) | `SERVICE_UNAVAILABLE` |
+
+An online player always goes back to the node that holds it, even after
+nodes are added or while that node drains; see [presence](../presence/README.md).
 
 ## Concurrency
 
@@ -64,4 +73,5 @@ login:
 * Auto-registration is demo behaviour. Real games usually verify a token from
   a platform SDK (Steam, Apple, Google, WeChat…) — replace `findOrCreate`.
 * Add per-IP/per-account attempt limits (Redis counters) against brute force.
-* Every login node needs a distinct `node.worker_id` for unique uids.
+* Every login node needs a distinct `node.worker_id` for unique uids. On
+  Kubernetes the operator runs login as a StatefulSet and uses the pod index.

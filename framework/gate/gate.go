@@ -69,6 +69,9 @@ type Config struct {
 	RateLimit float64 `yaml:"rate_limit"`
 	// RateBurst is the burst size of the per-session limiter. Default 100.
 	RateBurst int `yaml:"rate_burst"`
+	// BackendCheckInterval is how often sessions bound to vanished sticky
+	// backend nodes are kicked. Default 2s.
+	BackendCheckInterval time.Duration `yaml:"backend_check_interval"`
 }
 
 func (c *Config) setDefaults() {
@@ -77,6 +80,9 @@ func (c *Config) setDefaults() {
 	}
 	if c.SendQueueSize <= 0 {
 		c.SendQueueSize = 256
+	}
+	if c.BackendCheckInterval <= 0 {
+		c.BackendCheckInterval = 2 * time.Second
 	}
 	if c.IdleTimeout <= 0 {
 		c.IdleTimeout = 60 * time.Second
@@ -140,6 +146,8 @@ type Gate struct {
 	active  atomic.Int64
 	closing atomic.Bool
 	wg      sync.WaitGroup
+
+	stopWatch context.CancelFunc
 }
 
 // New creates a gate. routes must not overlap and must not cover framework ids (<= 999).
@@ -207,11 +215,17 @@ func (g *Gate) Start(ctx context.Context) error {
 			}
 		}(a)
 	}
+	watchCtx, cancel := context.WithCancel(context.Background())
+	g.stopWatch = cancel
+	go g.watchBackends(watchCtx)
 	return g.cluster.Registry().Register(ctx, router.GateService, self)
 }
 
 func (g *Gate) Stop(ctx context.Context) error {
 	g.closing.Store(true)
+	if g.stopWatch != nil {
+		g.stopWatch()
+	}
 	_ = g.cluster.Registry().Deregister(ctx, router.GateService, g.cluster.NodeID())
 	for _, a := range g.acceptors {
 		_ = a.Close()
@@ -378,6 +392,90 @@ func (g *Gate) handlePacket(s *clientSession, pkt network.Packet) {
 		g.logger.Warn("forward failed", "service", route.Service, "err", err)
 		g.sendError(s, pkt, errcode.ErrServiceUnavailable)
 	}
+}
+
+// watchBackends kicks sessions bound to a sticky backend node that left the
+// registry without cleaning up (a crash, or a pod killed without a graceful
+// stop). Otherwise those clients would wait on a node that never answers;
+// kicked with KICK_BACKEND_LOST they log in again and land on a live node.
+//
+// A node only counts as lost after this gate has seen it alive, so a node
+// that registered moments ago, and is not in this gate's registry cache yet,
+// is never mistaken for a dead one.
+func (g *Gate) watchBackends(ctx context.Context) {
+	seen := map[string]map[string]bool{} // service -> nodes seen alive last time
+	lost := map[string]map[string]time.Time{}
+	t := time.NewTicker(g.cfg.BackendCheckInterval)
+	defer t.Stop()
+	for first := true; ; first = false {
+		if !first {
+			select {
+			case <-ctx.Done():
+				return
+			case <-t.C:
+			}
+		}
+		now := time.Now()
+		for _, r := range g.routes {
+			if !r.Sticky {
+				continue
+			}
+			svc := r.Service
+			alive := map[string]bool{}
+			for _, key := range []string{svc, cluster.DrainingService(svc)} {
+				for _, n := range g.cluster.Registry().Nodes(key) {
+					alive[n] = true
+				}
+			}
+			if lost[svc] == nil {
+				lost[svc] = map[string]time.Time{}
+			}
+			for n := range seen[svc] {
+				if alive[n] {
+					continue
+				}
+				// Confirm against the registry store before kicking anyone:
+				// a draining node can be briefly missing from both caches.
+				if cluster.NodeAlive(g.cluster.Registry(), svc, n) {
+					alive[n] = true
+					continue
+				}
+				lost[svc][n] = now
+				g.logger.Warn("backend node lost", "service", svc, "node", n)
+			}
+			for n, at := range lost[svc] {
+				if alive[n] || now.Sub(at) > 10*time.Minute {
+					delete(lost[svc], n) // came back, or long forgotten
+				}
+			}
+			seen[svc] = alive
+		}
+		g.kickLostSessions(lost)
+	}
+}
+
+func (g *Gate) kickLostSessions(lost map[string]map[string]time.Time) {
+	var victims []*clientSession
+	g.mu.RLock()
+	for _, s := range g.sessions {
+		_, routes := s.snapshot()
+		for svc, node := range routes {
+			if _, gone := lost[svc][node]; gone {
+				victims = append(victims, s)
+				break
+			}
+		}
+	}
+	g.mu.RUnlock()
+	if len(victims) == 0 {
+		return
+	}
+	kick := g.kickPacket(syspb.KickReason_KICK_BACKEND_LOST)
+	for _, s := range victims {
+		s.CloseAfterFlush(kick)
+	}
+	metricRejected.WithLabelValues("backend_lost").Add(float64(len(victims)))
+	g.logger.Warn("kicked sessions of lost backend nodes", "sessions", len(victims))
 }
 
 func (g *Gate) match(id uint32) *Route {

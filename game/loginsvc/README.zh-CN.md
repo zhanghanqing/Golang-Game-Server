@@ -25,8 +25,13 @@ sequenceDiagram
     else 已存在
         L->>L: bcrypt.Compare
     end
-    L->>R: Nodes("game")
-    L->>L: node = PickByKey(nodes, uid)
+    L->>R: presence Owner(uid)
+    alt 在一台存活节点上在线（正常或排空中）
+        L->>L: node = 持有者
+    else 不在线
+        L->>R: Nodes("game")（只含正常节点）
+        L->>L: node = PickByKey(nodes, uid)
+    end
     L->>G: BIND {uid, routes: {game: node}}
     L->>G: REPLY LoginResp{uid, new_account}
     G->>C: LoginResp
@@ -41,6 +46,9 @@ sequenceDiagram
 | 密码与存储的 bcrypt 哈希匹配 | `ERR_WRONG_PASSWORD` |
 | 会话尚未登录 | `BAD_REQUEST` |
 | 至少注册了一个游戏节点 | `SERVICE_UNAVAILABLE` |
+| 归属目录可读（读不到就拒绝） | `SERVICE_UNAVAILABLE` |
+
+在线玩家总会回到持有它的那台节点，即使期间新增了节点、或那台节点正在排空；详见 [presence](../presence/README.zh-CN.md)。
 
 ## 并发
 
@@ -61,4 +69,5 @@ login:
 * 自动注册只是演示行为。真实游戏通常校验平台 SDK（Steam、Apple、Google、微信……）
   下发的令牌 —— 替换 `findOrCreate` 即可。
 * 增加按 IP/账号的尝试次数限制（Redis 计数器），防止暴力破解。
-* 每个登录节点都需要不同的 `node.worker_id`，以保证 uid 唯一。
+* 每个登录节点都需要不同的 `node.worker_id`，以保证 uid 唯一。在 Kubernetes 上，
+  Operator 用 StatefulSet 运行登录服，并用 Pod 序号作为 worker id。

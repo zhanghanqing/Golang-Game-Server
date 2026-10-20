@@ -25,6 +25,7 @@ import (
 	"gameserver/framework/router"
 	"gameserver/game/model"
 	"gameserver/game/pb"
+	"gameserver/game/presence"
 	"gameserver/game/protocol"
 	"gameserver/game/repo"
 )
@@ -54,6 +55,7 @@ type Service struct {
 	cluster  *cluster.Cluster
 	router   *router.Router
 	accounts repo.AccountRepo
+	presence presence.Directory
 	ids      *idgen.Snowflake
 	logger   *slog.Logger
 
@@ -62,7 +64,7 @@ type Service struct {
 }
 
 // New creates the login service.
-func New(cfg Config, c *cluster.Cluster, reg *message.Registry, accounts repo.AccountRepo, ids *idgen.Snowflake) *Service {
+func New(cfg Config, c *cluster.Cluster, reg *message.Registry, accounts repo.AccountRepo, dir presence.Directory, ids *idgen.Snowflake) *Service {
 	if cfg.BcryptCost == 0 {
 		cfg.BcryptCost = bcrypt.DefaultCost
 	}
@@ -77,6 +79,7 @@ func New(cfg Config, c *cluster.Cluster, reg *message.Registry, accounts repo.Ac
 		cluster:  c,
 		router:   router.New(protocol.ServiceLogin, reg, c),
 		accounts: accounts,
+		presence: dir,
 		ids:      ids,
 		logger:   logx.Module("login"),
 		sem:      make(chan struct{}, cfg.MaxConcurrent),
@@ -145,12 +148,9 @@ func (s *Service) handleLogin(c *router.Context, req *pb.LoginReq) (proto.Messag
 		return nil, err
 	}
 
-	// Sticky assignment: the same uid always lands on the same game node while
-	// the set of game nodes is stable, so a reconnecting player finds its
-	// in-memory state again.
-	node, ok := s.cluster.PickNode(protocol.ServiceGame, uint64(acc.UID))
-	if !ok {
-		return nil, errcode.ErrServiceUnavailable
+	node, err := s.pickGameNode(c, acc.UID)
+	if err != nil {
+		return nil, err
 	}
 	// Bind first, then reply: both go to the same gate subject from this
 	// goroutine, so the gate has the binding before the client sees LoginResp.
@@ -159,6 +159,29 @@ func (s *Service) handleLogin(c *router.Context, req *pb.LoginReq) (proto.Messag
 	}
 	s.logger.Info("login ok", "account", acc.Name, "uid", acc.UID, "game_node", node, "new", isNew)
 	return &pb.LoginResp{Uid: acc.UID, NewAccount: isNew, ServerTimeMs: time.Now().UnixMilli()}, nil
+}
+
+// pickGameNode chooses the game node for uid:
+//
+//  1. If the player is online, the node that owns it (active or draining), so
+//     a reconnect finds the in-memory state and never loads a second copy.
+//  2. Otherwise rendezvous hashing over active nodes only: draining nodes
+//     receive no new players.
+func (s *Service) pickGameNode(ctx context.Context, uid int64) (string, error) {
+	owner, err := s.presence.Owner(ctx, uid)
+	if err != nil {
+		// Without the directory we cannot rule out a second copy: fail closed.
+		s.logger.Error("presence lookup failed", "uid", uid, "err", err)
+		return "", errcode.ErrServiceUnavailable
+	}
+	if owner != "" && presence.GameNodeAlive(s.cluster.Registry(), owner) {
+		return owner, nil
+	}
+	node, ok := s.cluster.PickNode(protocol.ServiceGame, uint64(uid))
+	if !ok {
+		return "", errcode.ErrServiceUnavailable
+	}
+	return node, nil
 }
 
 // findOrCreate loads the account, auto-registering unknown names (demo behaviour;

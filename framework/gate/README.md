@@ -102,6 +102,7 @@ gate:
   idle_timeout: 60s        # clients should heartbeat every ~10-20s
   rate_limit: 50           # requests/second per session
   rate_burst: 100
+  backend_check_interval: 2s   # how often sessions of lost sticky nodes are kicked
 ```
 
 ## Metrics
@@ -110,7 +111,42 @@ gate:
 |---|---|
 | `gs_gate_sessions` | gauge |
 | `gs_gate_packets_in_total` / `gs_gate_packets_out_total` | counter |
-| `gs_gate_rejected_total{reason}` | counter (`max_conns`, `rate_limited`, `unknown_message`, `not_authenticated`) |
+| `gs_gate_rejected_total{reason}` | counter (`max_conns`, `rate_limited`, `unknown_message`, `not_authenticated`, `backend_lost`) |
+
+## Lost backend nodes
+
+A sticky session is bound to one game node. If that node dies without a
+graceful stop (crash, `kill -9`, a pod force-deleted), nobody sends a kick:
+the client would keep a healthy gate connection while every request goes to
+a node that never answers.
+
+The gate watches the registry for every sticky service and kicks such
+sessions with `KickPush(BACKEND_LOST)`; the client logs in again and lands on
+a live node.
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant C as Client
+    participant G as gate
+    participant R as Redis registry
+    participant N as game-2 (crashes)
+    N-xN: crash, heartbeats stop
+    R->>R: entry expires (registry_ttl)
+    loop every backend_check_interval
+      G->>R: alive game nodes? (cache)
+    end
+    G->>R: game-2 missing: confirm (re-read store)
+    G->>C: KickPush(BACKEND_LOST), close
+    C->>G: log in again → another game node
+```
+
+* A node counts as lost only after **this gate has seen it alive**, so a node
+  that registered a moment ago (not yet in the cache) is never mistaken for a
+  dead one.
+* Draining nodes are alive (they are listed under `<service>-draining`).
+* "Missing" is confirmed against Redis before kicking (`cluster.NodeAlive`), so
+  a stale cache never causes a mass kick.
 
 ## Graceful shutdown
 

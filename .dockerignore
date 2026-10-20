@@ -2,3 +2,5 @@
 bin
 docs
 **/*.md
+operator
+test/webconsole/out

@@ -31,6 +31,7 @@ import (
 type env struct {
 	natsURL   string
 	redisAddr string
+	redis     *miniredis.Miniredis
 	accounts  repo.AccountRepo
 	players   repo.PlayerRepo
 	nodes     map[string]*bootstrap.Server
@@ -51,6 +52,7 @@ func newEnv(t *testing.T) *env {
 	return &env{
 		natsURL:   ns.ClientURL(),
 		redisAddr: mr.Addr(),
+		redis:     mr,
 		// Stand-in for the shared MongoDB of a real deployment.
 		accounts: repo.NewMemoryAccounts(),
 		players:  repo.NewMemoryPlayers(),
@@ -72,6 +74,8 @@ func (e *env) start(t *testing.T, id string, roles ...string) *bootstrap.Server 
 	cfg.Redis.Addr = e.redisAddr
 	cfg.Storage.Driver = "mongo" // satisfied by WithRepos below; keeps Validate honest
 	cfg.Gate.TCPAddr = "127.0.0.1:0"
+	cfg.Admin.Addr = "127.0.0.1:0"
+	cfg.Gate.BackendCheckInterval = 200 * time.Millisecond
 	cfg.Login.BcryptCost = 4
 	cfg.Game.GMEnabled = true
 	cfg.Game.ChatInterval = time.Millisecond

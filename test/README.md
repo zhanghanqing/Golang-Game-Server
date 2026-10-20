@@ -33,6 +33,8 @@ flowchart LR
 |---|---|
 | `TestDistributedCluster` | registry discovery via Redis protocol, players spread over two game nodes, world chat across nodes and gates, re-login through another gate lands on the same game node and kicks the old session, save to shared store |
 | `TestLoginUnavailableWithoutGameNodes` | `SERVICE_UNAVAILABLE` when no game node is registered |
+| `TestScaleOutDrainAndShutdown` | what the operator does to a node: online players stay put when a node is added, `POST /game/drain` stops new assignments, players on the draining node still reconnect to it, `Stop` kicks + saves, everyone reconnects to the remaining node with progress intact |
+| `TestGateKicksSessionsOfCrashedNode` | a node vanishes from the registry without a graceful stop: the gate kicks its sessions with `BACKEND_LOST`, re-login takes over the stale presence entry |
 
 Every node in `test/cluster` has its own NATS connection and registry client,
 so the code paths are identical to separate processes. Storage is shared via
@@ -52,6 +54,12 @@ and zero JavaScript errors. Screenshots and `results.json` land in
 docker compose -f test/webconsole/compose.yml up --build --abort-on-container-exit --exit-code-from browser
 docker compose -f test/webconsole/compose.yml down
 ```
+
+## test/k8s — operator on Kubernetes
+
+[`test/k8s/e2e.sh`](k8s/README.md) runs on a real cluster (kind) with 160
+robots online: autoscale 2 → 4 game nodes, force-kill the busiest node, rolling
+update of every node, scale back to 2, verify MongoDB.
 
 ## Commands
 

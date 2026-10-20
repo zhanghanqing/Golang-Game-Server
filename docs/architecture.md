@@ -118,6 +118,27 @@ flowchart TB
 | Redis | registry entries with TTL | Sentinel / Cluster | routing uses last cached view |
 | MongoDB | accounts, players | replica set / sharding by `_id` | saves retried (players stay dirty) |
 
+### 3.3 Kubernetes (operator)
+
+The distributed topology above, described by one `GameCluster` object and run
+by the [operator](../operator/README.md):
+
+```mermaid
+flowchart LR
+    GC([GameCluster]) --> OP[operator]
+    OP --> GD[gate Deployment + Service]
+    OP --> LS[login StatefulSet<br/>pod index = Snowflake worker id]
+    OP --> GP["game pods, one by one<br/>autoscaled by online players"]
+    OP -. "GET /game/status · POST /game/drain" .-> GP
+```
+
+| Event | What happens |
+|---|---|
+| players grow | `ceil(players / targetPlayersPerNode)` nodes; new ones created at once |
+| players shrink | after `scaleDownDelay`, the emptiest node drains, then is deleted when empty or after `drainTimeout` |
+| new image or config | rolling update: add one node, drain one outdated node, repeat |
+| game pod crashes | replaced; gates kick its sessions (`BACKEND_LOST`); players re-login elsewhere |
+
 ---
 
 ## 4. Components
@@ -377,12 +398,21 @@ under 1 GB, comfortably within one machine.
 
 ### 8.2 Assigning players to game nodes
 
+First the [presence directory](../game/presence/README.md): a player who is
+already online goes back to the node that holds it (active or draining). Only
+players that are not online are hashed:
+
 `PickByKey(registry.Nodes("game"), uid)` — rendezvous hashing:
 
 * deterministic: same uid → same node while the set is unchanged;
 * adding `game-4` moves only ~1/4 of uids (only affects *new* logins: online
   players stay where they are until they log out);
-* removing a node moves only its uids.
+* removing a node moves only its uids;
+* draining nodes are listed under `game-draining`, so hashing skips them while
+  their own players still find them.
+
+A game node must acquire a player's presence entry before loading it, so the
+same player is never loaded on two nodes, even while nodes come and go.
 
 ### 8.3 Registry
 
@@ -399,13 +429,15 @@ immediately; a crash is detected within `registry_ttl` (default 10 s).
 | accounts | MongoDB `accounts` | login | first login |
 | players | MongoDB `players` | game | every `save_interval` if dirty, logout, shutdown |
 | service registry | Redis `gs:registry:*` | every node | heartbeat |
+| presence (who owns an online player) | Redis `gs:presence:<uid>` | game | load, every save tick, logout |
 | static tables | binary (`go:embed`) | designers | build time |
 
 * **Write-behind with dirty flag**: gameplay mutates memory; saving is batched
   per player. This is the standard MMO approach — DB load is proportional to
   players, not to actions.
-* **Single writer**: a player is loaded on exactly one node, so there are no
-  concurrent writers to the same document.
+* **Single writer**: a player is loaded on exactly one node — enforced by the
+  presence directory (compare-and-set in Redis) — so there are no concurrent
+  writers to the same document.
 * **Durability window**: a game node crash loses at most `save_interval` of
   that node's progress. Lower it for more safety; save immediately in handlers
   for critical events (purchases) — see §15.
@@ -425,7 +457,8 @@ immediately; a crash is detected within `registry_ttl` (default 10 s).
 | backend not running for a stateless route | registry empty | `SERVICE_UNAVAILABLE` |
 | DB save error | error from repo | logged, player stays dirty, retried next tick |
 | NATS disconnect | client callbacks | automatic reconnect with backoff |
-| node crash | registry TTL | removed from routing; its players reconnect and are re-assigned |
+| node crash | registry TTL | removed from routing; gates kick its sessions (`BACKEND_LOST`); players re-login, the new node takes over their presence entries |
+| node drained (scale-in, upgrade) | `POST /game/drain` | no new players; existing ones stay until they leave or the node stops (saved, kicked, reconnect elsewhere) |
 | SIGTERM | `app.Run` | ordered graceful shutdown (§6.7) |
 | request to a player that just logged out | `p.closed` | request re-dispatched to a fresh instance |
 
@@ -488,7 +521,7 @@ Measure with `cmd/robot -n 1000` and pprof.
 |---|---|---|
 | connections / bandwidth | gate CPU, `gs_gate_sessions` high | add gates |
 | login CPU (bcrypt) | login latency | add login nodes |
-| players per game node | game CPU / memory | add game nodes (new logins rebalance) |
+| players per game node | game CPU / memory | add game nodes (new logins rebalance); on Kubernetes the operator does it from `targetPlayersPerNode` |
 | one crowded scene | scene actor latency | split map into multiple scenes/channels (shards) |
 | DB writes | save latency | raise `save_interval`, shard Mongo by `_id` |
 | bus | NATS CPU | NATS cluster; keep envelopes small |
@@ -522,6 +555,8 @@ Measure with `cmd/robot -n 1000` and pprof.
 | Actor per player | global lock, sharded locks | no locks in gameplay code, natural per-player ordering |
 | Unbounded mailbox | bounded channel | no deadlocks on mutual posts; overload controlled at the gate |
 | Rendezvous hashing | consistent ring, central allocator | simple, stateless, minimal disruption, no extra service |
+| Presence directory on top of hashing | hashing only | hashing alone moves online players when nodes are added or drained; the directory keeps one owner per player |
+| Kubernetes operator with bare game pods | Deployment + HPA, StatefulSet | only the operator knows player counts, so only it can choose which node to drain and when to delete it |
 | Whole-document saves + dirty flag | per-field updates, event sourcing | simple and robust; one writer per player |
 | Protobuf with explicit id table | JSON, reflection-based ids | compact, cross-language, explicit reviewed contract |
 | `log/slog` | zap, logrus | standard library, structured, fast enough |
@@ -539,10 +574,13 @@ Measure with `cmd/robot -n 1000` and pprof.
 ├── game/                sample MMO business layer (see game/README.md)
 ├── proto/               .proto sources (framework/ and game/)
 ├── configs/             allinone, allinone-mongo, gate, login, game
-├── deploy/              Dockerfile, docker-compose.yml
+├── operator/            Kubernetes operator (separate Go module, see operator/README.md)
+├── deploy/              Dockerfile, docker-compose.yml, helm/gameserver
 ├── test/
 │   ├── e2e/             full server over real TCP/WS
-│   └── cluster/         distributed topology with embedded NATS + miniredis
+│   ├── cluster/         distributed topology with embedded NATS + miniredis
+│   ├── webconsole/      browser console driven by headless Chrome
+│   └── k8s/             operator end-to-end on a real Kubernetes cluster
 ├── docs/                architecture, protocol, getting started, development log
 ├── buf.yaml, buf.gen.yaml
 └── Makefile

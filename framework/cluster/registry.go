@@ -3,8 +3,10 @@ package cluster
 import (
 	"context"
 	"hash/fnv"
+	"slices"
 	"sort"
 	"sync"
+	"time"
 )
 
 // Registry tracks which nodes currently provide which service.
@@ -64,6 +66,44 @@ func (r *MemoryRegistry) Nodes(service string) []string {
 
 func (r *MemoryRegistry) Start(context.Context) error { return nil }
 func (r *MemoryRegistry) Close() error                { return nil }
+
+// DrainingService is the registry key under which draining nodes of service
+// are listed. A draining node keeps serving the sessions it already has but
+// receives no new ones (rendezvous hashing only uses the main key).
+func DrainingService(service string) string { return service + "-draining" }
+
+// Refresher is implemented by registries with a local cache (RedisRegistry).
+// Refresh re-reads the given services from the backing store, in order.
+type Refresher interface {
+	Refresh(ctx context.Context, services ...string) error
+}
+
+// NodeAlive reports whether node is registered for service, either active or
+// draining. A positive answer comes from the cache. A negative answer is
+// confirmed against the store first: caches refresh each key independently,
+// so a node moving from service to its draining key could briefly be missing
+// from both, and "dead" decisions (taking over its players, kicking its
+// sessions) must not be made on stale data. Reading the active key before the
+// draining key is safe because nodes register as draining before they leave
+// the active key.
+func NodeAlive(reg Registry, service, node string) bool {
+	alive := func() bool {
+		return slices.Contains(reg.Nodes(service), node) ||
+			slices.Contains(reg.Nodes(DrainingService(service)), node)
+	}
+	if alive() {
+		return true
+	}
+	if r, ok := reg.(Refresher); ok {
+		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+		defer cancel()
+		if err := r.Refresh(ctx, service, DrainingService(service)); err != nil {
+			return true // cannot confirm: assume alive, the safe choice
+		}
+		return alive()
+	}
+	return false
+}
 
 // PickByKey chooses one node for key using rendezvous (highest random weight)
 // hashing. The same key maps to the same node as long as that node is alive,

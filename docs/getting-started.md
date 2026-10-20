@@ -104,6 +104,23 @@ go run ./cmd/server -config configs/game.yaml
 
 Stop: `docker compose -f deploy/docker-compose.yml down` (add `-v` to wipe data).
 
+### 7b. Kubernetes (operator)
+
+Needs Docker, [kind](https://kind.sigs.k8s.io/), kubectl and Helm.
+
+```bash
+kind create cluster --name gs
+docker build -t gameserver:dev -f deploy/Dockerfile .
+docker build -t gameserver-operator:dev operator/
+kind load docker-image gameserver:dev gameserver-operator:dev --name gs
+helm install gs deploy/helm/gameserver -n game --create-namespace
+kubectl get gamecluster -n game -w        # wait for PHASE Running
+kubectl port-forward -n game svc/demo-gate 7000:7000 7001:7001
+go run ./cmd/robot -addr 127.0.0.1:7000 -n 200 -duration 5m -reconnect   # watch it scale out
+```
+
+Details: [operator](../operator/README.md), [Helm chart](../deploy/helm/gameserver/README.md).
+
 ## 8. Tests
 
 ```bash
@@ -117,7 +134,9 @@ go test -run TestFullGameFlow -v ./test/e2e/
 | `framework/...` | network framing, actor semantics, bus/registry/hashing, router, ids, config, tables |
 | `game/logic` | AOI, bag, level rules |
 | `test/e2e` | a full server over real TCP and WebSocket: login, AOI, bag, chat, movement, GM, duplicate login, save on disconnect and shutdown, 50 concurrent players |
-| `test/cluster` | 2 gates + 1 login + 2 game nodes over real NATS + Redis protocol: spreading, cross-node chat, cross-gate re-login, save |
+| `test/cluster` | 2 gates + 1 login + 2 game nodes over real NATS + Redis protocol: spreading, cross-node chat, cross-gate re-login, save; scale out, drain, shutdown and crash takeover |
+| `operator/...` | scaling/drain/rolling-update rules and full reconcile passes against a fake API server (`cd operator && go test ./...`) |
+| `test/k8s` | the operator on a real Kubernetes cluster with 160 robots online (`bash test/k8s/e2e.sh`) |
 
 ## 9. Configuration reference
 

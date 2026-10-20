@@ -32,6 +32,8 @@ flowchart LR
 |---|---|
 | `TestDistributedCluster` | 通过 Redis 协议进行服务发现、玩家分布在两个游戏节点、跨节点跨网关的世界聊天、从另一个网关重登会落到同一游戏节点并踢掉旧会话、保存到共享存储 |
 | `TestLoginUnavailableWithoutGameNodes` | 没有注册游戏节点时返回 `SERVICE_UNAVAILABLE` |
+| `TestScaleOutDrainAndShutdown` | Operator 对一台节点做的全部操作：新增节点时在线玩家原地不动、`POST /game/drain` 后不再分配新玩家、排空节点上的玩家重连仍回到它、`Stop` 踢人并存盘、所有人带着进度重连到剩下的节点 |
+| `TestGateKicksSessionsOfCrashedNode` | 节点未经优雅停机就从注册中心消失：网关用 `BACKEND_LOST` 踢掉它的会话，重新登录时接管过期的归属记录 |
 
 `test/cluster` 中每个节点都有自己的 NATS 连接和注册中心客户端，因此代码路径与独立进程完全一致。
 存储通过 `bootstrap.WithRepos` 共享（代替 MongoDB）。
@@ -47,6 +49,11 @@ flowchart LR
 docker compose -f test/webconsole/compose.yml up --build --abort-on-container-exit --exit-code-from browser
 docker compose -f test/webconsole/compose.yml down
 ```
+
+## test/k8s —— Operator 在 Kubernetes 上
+
+[`test/k8s/e2e.sh`](k8s/README.zh-CN.md) 在真实集群（kind）上运行，160 个机器人全程在线：
+自动扩容 2 → 4 台游戏服、强杀最忙的节点、所有节点滚动升级、缩回 2 台、核对 MongoDB。
 
 ## 命令
 

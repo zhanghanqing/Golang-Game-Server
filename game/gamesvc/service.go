@@ -15,6 +15,7 @@ import (
 	"context"
 	"log/slog"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"gameserver/framework/cluster"
@@ -24,6 +25,7 @@ import (
 	"gameserver/framework/pb/syspb"
 	"gameserver/framework/router"
 	"gameserver/game/gamedata"
+	"gameserver/game/presence"
 	"gameserver/game/protocol"
 	"gameserver/game/repo"
 )
@@ -54,36 +56,49 @@ func (c *Config) setDefaults() {
 
 // Service is an app.Module.
 type Service struct {
-	cfg     Config
-	cluster *cluster.Cluster
-	router  *router.Router
-	players repo.PlayerRepo
-	tables  *gamedata.Tables
-	scene   *Scene
-	logger  *slog.Logger
+	cfg      Config
+	cluster  *cluster.Cluster
+	router   *router.Router
+	players  repo.PlayerRepo
+	presence presence.Directory
+	tables   *gamedata.Tables
+	scene    *Scene
+	logger   *slog.Logger
 
 	ctx    context.Context
 	cancel context.CancelFunc
 	sub    cluster.Subscription
 
+	draining atomic.Bool // moved to the draining registry key: no new players
+	stopping atomic.Bool // shutting down: refuse EnterGame
+
 	mu     sync.Mutex
 	online map[int64]*Player
 }
 
+// Status is a snapshot reported to operators (see the admin endpoint /game/status).
+type Status struct {
+	Node     string `json:"node"`
+	Players  int    `json:"players"`
+	Draining bool   `json:"draining"`
+	Stopping bool   `json:"stopping"`
+}
+
 // New creates the game service.
-func New(cfg Config, c *cluster.Cluster, reg *message.Registry, players repo.PlayerRepo, tables *gamedata.Tables) *Service {
+func New(cfg Config, c *cluster.Cluster, reg *message.Registry, players repo.PlayerRepo, dir presence.Directory, tables *gamedata.Tables) *Service {
 	cfg.setDefaults()
 	ctx, cancel := context.WithCancel(context.Background())
 	s := &Service{
-		cfg:     cfg,
-		cluster: c,
-		router:  router.New(protocol.ServiceGame, reg, c),
-		players: players,
-		tables:  tables,
-		logger:  logx.Module("game"),
-		ctx:     ctx,
-		cancel:  cancel,
-		online:  make(map[int64]*Player),
+		cfg:      cfg,
+		cluster:  c,
+		router:   router.New(protocol.ServiceGame, reg, c),
+		players:  players,
+		presence: dir,
+		tables:   tables,
+		logger:   logx.Module("game"),
+		ctx:      ctx,
+		cancel:   cancel,
+		online:   make(map[int64]*Player),
 	}
 	s.router.Use(router.AccessLog(s.logger, 50*time.Millisecond))
 	s.registerHandlers()
@@ -107,11 +122,46 @@ func (s *Service) Start(ctx context.Context) error {
 	return s.cluster.Registry().Register(ctx, protocol.ServiceGame, s.cluster.NodeID())
 }
 
-// Stop saves and unloads every online player.
+// Drain stops new players from being assigned to this node. Players already
+// here keep playing (and reconnects still find them) until they leave or the
+// node is stopped. It is idempotent.
+func (s *Service) Drain(ctx context.Context) error {
+	if s.draining.Swap(true) {
+		return nil
+	}
+	reg := s.cluster.Registry()
+	// Register under the draining key first so the node never looks dead to login.
+	if err := reg.Register(ctx, protocol.ServiceGameDraining, s.cluster.NodeID()); err != nil {
+		s.draining.Store(false)
+		return err
+	}
+	if err := reg.Deregister(ctx, protocol.ServiceGame, s.cluster.NodeID()); err != nil {
+		return err
+	}
+	s.logger.Info("draining: no new players will be assigned", "online", s.OnlineCount())
+	return nil
+}
+
+// Status returns the current node status.
+func (s *Service) Status() Status {
+	return Status{
+		Node:     s.cluster.NodeID(),
+		Players:  s.OnlineCount(),
+		Draining: s.draining.Load(),
+		Stopping: s.stopping.Load(),
+	}
+}
+
+// Stop saves and unloads every online player. Order matters:
+//
+//  1. Drain: login stops assigning new players, but the node stays "alive"
+//     so reconnects of its players are not sent elsewhere too early.
+//  2. Kick, save and release every player.
+//  3. Deregister completely and stop receiving messages.
 func (s *Service) Stop(ctx context.Context) error {
-	_ = s.cluster.Registry().Deregister(ctx, protocol.ServiceGame, s.cluster.NodeID())
-	if s.sub != nil {
-		_ = s.sub.Unsubscribe()
+	s.stopping.Store(true)
+	if err := s.Drain(ctx); err != nil {
+		s.logger.Warn("drain before stop failed", "err", err)
 	}
 	s.mu.Lock()
 	all := make([]*Player, 0, len(s.online))
@@ -122,18 +172,22 @@ func (s *Service) Stop(ctx context.Context) error {
 
 	var wg sync.WaitGroup
 	for _, p := range all {
-		wg.Add(1)
-		go func(p *Player) {
-			defer wg.Done()
+		wg.Go(func() {
 			_ = p.actor.Call(ctx, func() {
 				if p.session.Valid() {
 					_ = s.router.Kick(p.session, syspb.KickReason_KICK_SERVER_SHUTDOWN)
 				}
 				s.logout(p)
 			})
-		}(p)
+		})
 	}
 	wg.Wait()
+
+	_ = s.cluster.Registry().Deregister(ctx, protocol.ServiceGameDraining, s.cluster.NodeID())
+	_ = s.cluster.Registry().Deregister(ctx, protocol.ServiceGame, s.cluster.NodeID())
+	if s.sub != nil {
+		_ = s.sub.Unsubscribe()
+	}
 	s.scene.Stop()
 	s.cancel()
 	s.logger.Info("game service stopped", "saved_players", len(all))
@@ -222,8 +276,16 @@ func (s *Service) logout(p *Player) {
 		s.scene.Leave(p.uid)
 		p.inScene = false
 	}
-	p.saveTimer.Stop()
+	if p.saveTimer != nil {
+		p.saveTimer.Stop()
+	}
 	p.save()
+	// Release ownership before leaving the online map: a request arriving in
+	// between still reaches this (closing) entity and is re-dispatched to a
+	// fresh one, which then acquires ownership again.
+	if p.owned {
+		p.releaseOwnership()
+	}
 	s.mu.Lock()
 	if s.online[p.uid] == p {
 		delete(s.online, p.uid)

@@ -35,6 +35,7 @@ flowchart TB
 | `logic` | Pure, unit-tested rules: AOI grid, bag, experience curve | [logic](logic/README.md) |
 | `repo`, `model` | Persistence interfaces, MongoDB + in-memory implementations, documents | [repo](repo/README.md) |
 | `gamedata` | Designer tables (`tables/items.json`) embedded into the binary | below |
+| `presence` | who owns each online player (Redis / memory); keeps one copy per player while nodes come and go | [presence](presence/README.md) |
 | `webconsole` | Browser test client + one-click self-test, served on the admin port | [webconsole](webconsole/README.md) |
 
 ## Implemented features

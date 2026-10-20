@@ -34,6 +34,7 @@ flowchart TB
 | `logic` | 纯规则、有单元测试：AOI 网格、背包、经验曲线 | [logic](logic/README.zh-CN.md) |
 | `repo`、`model` | 持久化接口、MongoDB 与内存实现、文档结构 | [repo](repo/README.zh-CN.md) |
 | `gamedata` | 策划配置表（`tables/items.json`），编译进二进制 | 见下文 |
+| `presence` | 记录每个在线玩家归哪台节点（Redis / 内存）；节点增减时保证每个玩家只有一份 | [presence](presence/README.zh-CN.md) |
 | `webconsole` | 浏览器测试客户端 + 一键自检，挂在管理端口上 | [webconsole](webconsole/README.zh-CN.md) |
 
 ## 已实现功能
